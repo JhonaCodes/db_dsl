@@ -3,6 +3,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:result_controller/result_controller.dart';
 
@@ -24,6 +25,7 @@ part 'builders/projection_queries.dart';
 part 'builders/group_query.dart';
 part 'builders/join_query.dart';
 part 'builders/associations.dart';
+part 'builders/relation.dart';
 
 /// Makes a finished query awaitable: `await users.filter(...)` runs it on
 /// the implicit executor of its table (see [QueryExecutor.using]) — the

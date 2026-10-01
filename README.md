@@ -261,6 +261,25 @@ final plan = await users.filter(users.city.eq('Lima')).explain();
 // MemoryEngine always answers full_scan: it does not emulate the planner.
 ```
 
+## Many-to-many
+
+A `Relation` links the rows of two tables through a bridge table of its
+own, one row per linked pair, keyed by the pair:
+
+```dart
+final skillsOf = Relation<Person, Skill>('people_skills', from: Person.table, to: Skill.table);
+
+await skillsOf.attach(ada, dart);              // 1; 0 when already linked
+await skillsOf.targetsOf(ada);                 // Result<List<Skill>, DbError>
+await skillsOf.sourcesOf(dart);                // Result<List<Person>, DbError>
+await skillsOf.detach(ada, dart);              // the rows stay
+```
+
+Both directions read only the neighbours of a row: an index on each side
+of the bridge, then primary key lookups. Links are ordinary rows, so they
+commit or roll back with the transaction they are awaited in. A row
+without its key (not stored yet) answers `missingPrimaryKey`.
+
 ## Writes
 
 ```dart

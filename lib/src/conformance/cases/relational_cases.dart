@@ -736,5 +736,67 @@ abstract final class _RelationalCases {
       );
       await db.close();
     }),
+    ConformanceCase(
+      'relational',
+      'a relation links both ways, and detach keeps the rows',
+      (host) async {
+        final people = JsonTable('people');
+        final skills = JsonTable('skills');
+        final skillsOf = Relation<JsonRow, JsonRow>(
+          'people_skills',
+          from: people,
+          to: skills,
+        );
+        final db = await host.open([people, skills, skillsOf.links]);
+        const ada = JsonRow({'id': 'ada'});
+        const linus = JsonRow({'id': 'linus'});
+        const dart = JsonRow({'id': 'dart'});
+        const rust = JsonRow({'id': 'rust'});
+        Check.ok(await people.insert([ada, linus]).execute(db), 'people');
+        Check.ok(await skills.insert([dart, rust]).execute(db), 'skills');
+
+        for (final (person, skill) in [
+          (ada, dart),
+          (ada, rust),
+          (linus, rust),
+        ]) {
+          Check.equals(
+            Check.ok(await skillsOf.attach(person, skill), 'attach'),
+            1,
+            'a new link',
+          );
+        }
+        Check.equals(
+          Check.ok(await skillsOf.attach(ada, dart), 'attach again'),
+          0,
+          'linking twice links once',
+        );
+        Check.equals(Check.ok(await skillsOf.targetsOf(ada), 'targets'), [
+          dart,
+          rust,
+        ], 'the skills of ada');
+        Check.equals(Check.ok(await skillsOf.sourcesOf(rust), 'sources'), [
+          ada,
+          linus,
+        ], 'the people of rust');
+
+        Check.equals(
+          Check.ok(await skillsOf.detach(ada, dart), 'detach'),
+          1,
+          'the link is removed',
+        );
+        Check.equals(
+          Check.ok(await skillsOf.targetsOf(ada), 'targets after detach'),
+          [rust],
+          'one skill left',
+        );
+        Check.equals(
+          Check.ok(await skills.find('dart').first(db), 'find'),
+          dart,
+          'detach keeps the row',
+        );
+        await db.close();
+      },
+    ),
   ];
 }

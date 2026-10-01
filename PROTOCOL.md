@@ -500,7 +500,15 @@ in `update`. The answer is `{"affected": n, "rows": []}`.
   `full_scan`; `index` names the index of an `index_scan`; `presorted` means
   the rows come out in the requested order; `exact` means the visited keys
   alone satisfy the filter. Plans are advice for humans: two correct engines
-  may choose different plans.
+  may choose different plans. An `eq_any` on the primary key or on the
+  leading field of an index may be answered with lookups of only the named
+  keys (offline_first_core does from 0.7.4).
+
+  Engine extension, not part of the v1 conformance: offline_first_core 0.7.3
+  and later also explain a **join** query (a `query` with `from` instead of
+  `table`), answering `{"strategy": "hash_join", "tables": [{"table",
+  "as", "access"}, ...], "filter": "after_join" | "none"}`. Clients should
+  not rely on other engines answering it.
 - `info` describes the database: `lmdb` is the storage and its version
   (`"memory"` for `MemoryEngine`), `map_size` the current size of the memory
   map in bytes (0 when nothing is mapped).

@@ -1,3 +1,21 @@
+## 0.2.3
+
+### Added
+- `Relation<A, B>`: a many-to-many relation through a bridge table of its
+  own, one row per linked pair (keyed by the pair, with an index on each
+  side). `attach` (1, or 0 when already linked), `detach` (removes the
+  link, never the rows), `targetsOf` and `sourcesOf` (only the neighbours:
+  an index range, then primary key lookups). A row without its key answers
+  `missingPrimaryKey`. Links are ordinary rows: they follow the transaction
+  they are awaited in.
+- A conformance case for relations, replayed on every engine.
+
+### Changed
+- PROTOCOL.md notes two engine behaviours: an `eq_any` may be answered by
+  lookups of only the named keys (offline_first_core 0.7.4), and
+  offline_first_core 0.7.3 also explains a join query, an engine extension
+  outside the v1 conformance.
+
 ## 0.2.2
 
 Documentation and tests; no change in behaviour.
