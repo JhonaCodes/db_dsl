@@ -1,25 +1,28 @@
 # db_dsl
 
 A Diesel-style query language for Dart that stores the models your app
-already has. Declare a table in one line from your model, build queries
-with Diesel's vocabulary (`filter`, `order`, `group_by`, `inner_join`,
-`insert`, `update().set()`, `transaction`), and await them. Every operation
-answers a `Result`: `Ok` with the value, or `Err` with a typed `DbError`.
+already has. Your model carries its table in one line, queries use Diesel's
+vocabulary (`filter`, `order`, `group_by`, `inner_join`, `insert`,
+`update().set()`, `transaction`), and they run when awaited. Every
+operation answers a `Result`: `Ok` with the value, or `Err` with a typed
+`DbError`.
 
 ```dart
-final users = DbTable<User>('users', key: 'id', fromJson: User.fromJson);
+final t = User.table;
 
-await users.insert([ada, grace]);
+await t.insert([ada, grace]);
 
-final adults = await users
-    .filter(users.field<String>('city').eq('Lima'))
-    .order(users.field<int>('age').desc())
+final adults = await t
+    .filter(t.city.eq('Lima').and(t.age.gt(30)))
+    .order(t.age.desc())
     .limit(20); // Result<List<User>, DbError>
 ```
 
 No code generation, no macros, no table classes: `User` is the class your
 app already uses (for example, the one it decodes from an API), with its
-`fromJson` and `toJson`.
+`fromJson` and `toJson`. The typed fields (`t.city`, `t.age`) are plain
+code that the [db_dsl_lints](#the-analyzer-plugin) plugin writes from the
+model and checks as you type.
 
 db_dsl is pure Dart: it runs on servers, in Flutter apps and on the web. It
 brings no native binary. The packages that store data bring theirs:
@@ -58,6 +61,15 @@ final class User {
     age: json['age'] as int,
   );
 
+  // The table of this model: its name, its key and how to read a row.
+  static final table = DbTable<User>(
+    'users',
+    key: 'id',
+    fromJson: User.fromJson,
+    autoIncrement: true,                 // optional: rows without an id get one
+    indexes: [Index(['city', 'age'])],  // optional
+  );
+
   final int? id;
   final String name;
   final String city;
@@ -65,16 +77,12 @@ final class User {
 
   Map<String, dynamic> toJson() => {'id': id, 'name': name, 'city': city, 'age': age};
 }
-
-final users = DbTable<User>(
-  'users',
-  key: 'id',
-  fromJson: User.fromJson,
-  autoIncrement: true,                 // optional: rows without an id get one
-  indexes: [Index(['city', 'age'])],  // optional
-);
 ```
 
+- **The table lives in the model, as a `static`.** Dart has no static
+  inheritance, and a query has no instance to inherit from, so a `static`
+  on the class is the closest to "the class is the table" — and it is not a
+  global.
 - **`fromJson` is the one thing a table needs.** It is a constructor, and
   Dart can neither require a constructor of a type nor call one through a
   type parameter, so it is passed once.
@@ -88,25 +96,69 @@ final users = DbTable<User>(
 - Indexes are named after their fields (`by_city_age`, or
   `Index.unique(['email'])` → `unique_email`), or with `name:`.
 
-Opening a database defines its tables: new ones are created, new indexes
-are built over existing rows, and removed indexes are dropped. From then on
-the tables belong to that database, and their queries run there when
-awaited.
+Tables are not listed anywhere. Open the database once; each table defines
+itself there the first time it is used — created if new, new indexes built
+over existing rows, removed ones dropped — and its queries run there from
+then on:
 
 ```dart
-final opened = await Database.open(MemoryEngine(), path: 'blog', tables: [users, posts]);
+await Database.open(MemoryEngine(), path: 'blog');
+
+await User.table.insert([ada]); // defines `users`, then inserts
 ```
 
-With flutter_local_db it is `LocalDB.init(tables: [...])`, and with dart_db
-`DartDb.open(path, tables: [...])`; everything else on this page is the
-same.
+With flutter_local_db it is `LocalDB.init()`, and with dart_db
+`DartDb.open(path)`; everything else on this page is the same.
 
-## Fields of any type
+- **The default database is the first one opened**, until it closes. A
+  table defines itself on it.
+- **Concurrent first uses define a table once.**
+- **A table first used inside a transaction answers
+  `Err(DbErrorCode.tableNotReady)`** instead of waiting forever: defining
+  needs the database to itself, which the transaction holds. Use the table
+  once before, or list it when opening — `tables:` (`LocalDB.init(tables:
+  [...])`, `DartDb.open(path, tables: [...])`) defines tables up front,
+  which also builds their indexes at start-up.
 
-A field is a path in the stored rows, compared as values of a Dart type:
+## Typed fields
+
+A query names a field as a getter of its table, with the type the model
+stores:
 
 ```dart
-final city = users.field<String>('city');
+extension UserFields on DbTable<User> {
+  /// The stored `id`.
+  Field<int> get id => field('id');
+
+  /// The stored `name`.
+  Field<String> get name => field('name');
+
+  /// The stored `city`.
+  Field<String> get city => field('city');
+
+  /// The stored `age`.
+  Field<int> get age => field('age');
+}
+
+final t = User.table;
+await t.filter(t.city.eq('Lima').and(t.age.gt(30)));
+
+t.cty;        // does not compile
+t.age.eq('1') // does not compile: Field<int>.eq(int)
+```
+
+**Nobody types this extension.** A getter cannot come out of `User` itself
+— `user.age` is an `int`, which does not remember which field it came from,
+and Diesel declares its columns apart for the same reason — but the
+[analyzer plugin](#the-analyzer-plugin) writes it from the model's
+`toJson` with one quick fix, and writes it again when the model changes.
+It is ordinary code in your file: no `build_runner`, no `.g.dart`.
+
+A field is a path in the stored rows, compared as values of a Dart type.
+`field<V>(path)` is the building block of those getters, and works on its
+own too:
+
+```dart
 final zip = users.field<String>('address.zip');      // a nested value
 final status = members.field<Status>('status');      // an enum
 final joined = members.field<DateTime>('joined');
@@ -130,16 +182,37 @@ await products.filter(price.gt(const Money(1000)));
 ISO 8601 dates sort correctly when they are all UTC with the same precision;
 store `toUtc()` dates, or numbers, when you sort or range over them.
 
-Typing the field names once is optional sugar, not a requirement:
+## The analyzer plugin
 
-```dart
-extension UserFields on DbTable<User> {
-  Field<String> get city => field('city');
-  Field<int> get age => field('age');
-}
+[db_dsl_lints](https://pub.dev/packages/db_dsl_lints) reads each model's
+`toJson` (a map literal, or json_serializable's generated `_$UserToJson`)
+and checks every table against it, in the IDE and in `dart analyze` (which
+works in Flutter projects too; `flutter analyze` does not report plugin
+diagnostics yet). Enable it in `analysis_options.yaml` (no dependency in
+`pubspec.yaml`), then restart the analysis server:
 
-await users.filter(users.city.eq('Lima').and(users.age.gt(30)));
+```yaml
+plugins:
+  db_dsl_lints: ^0.1.0
 ```
+
+| Diagnostic | When | Quick fix |
+|---|---|---|
+| `missing_query_fields` (warning) | the model stores fields its table does not expose yet: no `UserFields` extension, or the model gained a field | *Write the query fields from the model* |
+| `unknown_field` (error) | `field('cty')` or `Index(['cty'])` names a field the model does not store — also after renaming a field of the model | *Use 'city'*, or *Write the query fields from the model* |
+| `field_type_mismatch` (error) | `Field<String> get age => field('age')` while the model stores an `int` | *Use Field<int>* |
+| `unknown_key` (error) | the table's `key:` is not a stored field | *Use 'id'* |
+
+The assist *Write the query fields of the table* (on `DbTable<User>(...)`
+or on its extension) writes the same extension on demand. A `DateTime`
+stored as epoch milliseconds or microseconds gets its `encode` and
+`decode`; a field with its own `encode`/`decode` is not type-checked.
+
+When a model's `toJson` is built at run time (`Map.of(values)`), the plugin
+cannot read it and reports nothing: never a false positive. Plugin fixes
+run from the IDE; `dart fix` does not apply them yet (a limit of Dart's
+plugin system), which is why a model change is a warning you see right
+away.
 
 ## Queries
 
@@ -166,15 +239,15 @@ database that opened the table, or on the transaction around it.
 // GROUP BY city HAVING COUNT(*) >= 2
 const people = Field<int>('people');
 final cities = await users
-    .groupBy([city])
+    .groupBy([users.city])
     .count('people')
-    .max(age, 'oldest')
+    .max(users.age, 'oldest')
     .having(people.ge(2)); // Result<List<GroupRow>, DbError>
 
 // LEFT JOIN posts ON posts.author_id = users.id
 final rows = await users
-    .leftJoin(posts, on: users.field<int>('id'), equals: posts.field<int>('author_id'))
-    .order(users.field<String>('name').asc()); // Result<List<JoinRow>, DbError>
+    .leftJoin(posts, on: users.id, equals: posts.authorId)
+    .order(users.name.asc()); // Result<List<JoinRow>, DbError>
 // row.of(users) is the user; row.maybe(posts) is null without a post.
 ```
 
@@ -183,7 +256,7 @@ values of different kinds never compare. `explain` shows whether a query
 uses an index:
 
 ```dart
-final plan = await users.filter(city.eq('Lima')).explain();
+final plan = await users.filter(users.city.eq('Lima')).explain();
 // offline_first_core: access index_scan over by_city_age.
 // MemoryEngine always answers full_scan: it does not emulate the planner.
 ```
@@ -198,12 +271,12 @@ await users.insert([ada]).onConflictDoNothing();
 
 await posts
     .update()
-    .filter(postId.eq('p1'))
-    .set(title, 'Typed tables')
-    .increment(views, 1)                           // views = views + 1
+    .filter(posts.id.eq('p1'))
+    .set(posts.title, 'Typed tables')
+    .increment(posts.views, 1)                     // views = views + 1
     .expectAffectedRows(1);                        // or nothing is written
 
-await posts.delete().filter(authorId.eq(3));
+await posts.delete().filter(posts.authorId.eq(3));
 
 await db.atomicBatch([insertA, updateB, deleteC]); // all or nothing
 ```
@@ -216,7 +289,7 @@ none of them.
 ```dart
 final result = await db.transaction<bool>((tx) async {
   // Awaited inside the transaction, so it runs on it.
-  final renamed = await posts.update().filter(postId.eq('p1')).set(title, 'Typed tables');
+  final renamed = await posts.update().filter(posts.id.eq('p1')).set(posts.title, 'Typed tables');
 
   if (renamed case Err(:final error)) {
     return Err(error); // the whole transaction rolls back
@@ -232,6 +305,8 @@ final result = await db.transaction<bool>((tx) async {
 - `transaction` commits when the body answers `Ok` and rolls back on `Err`.
 - `readTransaction` gives a consistent snapshot that runs next to writes.
 - One write transaction at a time; other writes of the database wait for it.
+- A table used there for the first time answers `tableNotReady` (see
+  [Tables from your models](#tables-from-your-models)).
 - A transaction left idle for 30 seconds (`idleTimeout`) is rolled back.
 
 ## Another database
@@ -245,13 +320,13 @@ await users.all().load(archive);
 await users.insert([ada]).execute(archive);
 ```
 
-A query of a table that belongs to no database answers `Err` with
+A query awaited while no database is open answers `Err` with
 `DbErrorCode.notOpen`.
 
 ## Reactive queries
 
 ```dart
-users.filter(city.eq('Lima')).watch().listen((result) {
+users.filter(users.city.eq('Lima')).watch().listen((result) {
   // the rows now, and again after each committed write to `users`
 });
 ```
@@ -264,7 +339,7 @@ users.filter(city.eq('Lima')).watch().listen((result) {
 final message = switch (error) {
   ConstraintError() => 'That value already exists',   // duplicate key, unique index
   TransactionError() => 'Try again',                  // closed, aborted, expired
-  SchemaError() => 'Bug: $error',                     // unknown table, row mapping
+  SchemaError() => 'Bug: $error',                     // unknown table, row mapping, table not ready
   StorageError() => 'Storage problem: $error',        // full, corrupt, legacy format
   EngineError() => 'Engine problem: $error',          // missing or failed engine
 };
@@ -285,16 +360,18 @@ run on it without any binary:
 late Database db;
 
 setUp(() async {
-  db = (await Database.open(MemoryEngine(), path: 'test', tables: [users]))
+  db = (await Database.open(MemoryEngine(), path: 'test'))
       .when(ok: (db) => db, err: (error) => fail('$error'));
 });
 
-// Closing gives the tables back, so the next test's database takes them.
+// Closing gives the tables back and stops being the default database, so
+// the next test's database takes them.
 tearDown(() => db.close());
 
 test('adults', () async {
+  final users = User.table;
   await users.insert([ada, linus]);
-  final adults = await users.filter(users.field<int>('age').ge(18));
+  final adults = await users.filter(users.age.ge(18));
   // ...
 });
 ```
@@ -316,7 +393,7 @@ replays them, and a test keeps the document equal to them.
 
 ## Status
 
-db_dsl is at **0.1.0**: the API may still change before 1.0. The protocol is
+db_dsl is at **0.2.0**: the API may still change before 1.0. The protocol is
 version 1 and only grows (see "Compatibility" in PROTOCOL.md).
 
 ## License

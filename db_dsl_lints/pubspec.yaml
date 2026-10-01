@@ -1,0 +1,25 @@
+name: db_dsl_lints
+description: "Analyzer plugin for db_dsl: checks every table field against the app's model while you type, and writes the typed fields of a table from its model."
+version: 0.1.0
+repository: https://github.com/JhonaCodes/db_dsl/tree/main/db_dsl_lints
+issue_tracker: https://github.com/JhonaCodes/db_dsl/issues
+
+topics:
+  - database
+  - analyzer
+  - lints
+  - code-quality
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  analysis_server_plugin: ^0.3.23
+  analyzer: ^14.4.0
+  analyzer_plugin: ^0.14.17
+
+dev_dependencies:
+  analyzer_testing: ^0.4.2
+  lints: ^6.0.0
+  test: ^1.25.0
+  test_reflective_loader: ^0.3.0

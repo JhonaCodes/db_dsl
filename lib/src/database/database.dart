@@ -3,6 +3,7 @@
 library;
 
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:logger_rs/logger_rs.dart';
 import 'package:meta/meta.dart';
@@ -34,47 +35,95 @@ sealed class QueryExecutor {
   /// Runs [statement] and answers its output.
   Future<Result<O, DbError>> run<O>(Statement<O> statement);
 
-  /// Where a query of [table] runs when it is awaited without naming an
-  /// executor: the transaction running in the current zone, when it belongs
-  /// to the database that opened [table]; otherwise that database.
+  /// The error of a query of [table] awaited while no database is open.
+  /// Used by the query builders.
+  @internal
+  static DbError notOpen(DbTable<Object?> table) => DbError(
+    DbErrorCode.notOpen,
+    '`${table.tableName}` is open in no database: open a database first, '
+    'or name the database to run on',
+  );
+
+  /// Runs [action] on [on] when given, else on the implicit executor of
+  /// [table]. Used by the query builders.
+  ///
+  /// The implicit executor is the transaction running in the current zone
+  /// when it belongs to the database of [table], otherwise that database.
+  /// A table no database holds yet is defined on the default database (the
+  /// first one opened) the first time it is used.
   ///
   /// Why implicit: an app has one database loaded, and naming it on every
   /// query adds nothing; naming another one (`load(other)`,
   /// `execute(other)`) is the exception. Inside a transaction the implicit
   /// executor is the transaction, so an awaited write commits or rolls back
   /// with it instead of escaping to autocommit.
-  static Result<QueryExecutor, DbError> of(DbTable<Object?> table) =>
-      switch ((Database._homes[table], Zone.current[Database._scopeZone])) {
-        (null, _) => Err(notOpen(table)),
-        (final Database home, final Transaction tx)
-            when identical(tx._database, home) =>
-          Ok(tx),
-        (final Database home, final ReadTransaction tx)
-            when identical(tx._database, home) =>
-          Ok(tx),
-        (final Database home, _) => Ok(home),
-      };
-
-  /// The error of a query of [table] awaited while the table is open in no
-  /// database. Used by the query builders.
-  @internal
-  static DbError notOpen(DbTable<Object?> table) => DbError(
-    DbErrorCode.notOpen,
-    '`${table.tableName}` is open in no database: open a database with it, '
-    'or name the database to run on',
-  );
-
-  /// Runs [action] on [on] when given, else on the implicit executor of
-  /// [table] (see [of]). Used by the query builders.
   @internal
   static Future<Result<R, DbError>> using<R>(
     DbTable<Object?> table,
     QueryExecutor? on,
     Future<Result<R, DbError>> Function(QueryExecutor executor) action,
-  ) => switch (on) {
+  ) async => switch (on) {
     final QueryExecutor explicit => action(explicit),
-    null => of(table).when(ok: action, err: (error) async => Err(error)),
+    null => (await _implicit(
+      table,
+    )).when(ok: action, err: (error) async => Err(error)),
   };
+
+  /// The database of [table], defining the table on the default database
+  /// when no database holds it yet. Used by `explain` and `watch`, which
+  /// need a database rather than a transaction.
+  @internal
+  static Future<Result<Database, DbError>> homeFor(
+    DbTable<Object?> table,
+  ) async => switch ((Database._homes[table], Database._default)) {
+    (final Database home, _) => Ok(home),
+    (null, null) => Err(notOpen(table)),
+    (null, final Database fallback) => (await _define(
+      table,
+      fallback,
+    )).flatMap((_) => Ok(fallback)),
+  };
+
+  static Future<Result<QueryExecutor, DbError>> _implicit(
+    DbTable<Object?> table,
+  ) async {
+    final scope = Zone.current[Database._scopeZone];
+
+    return switch ((Database._homes[table], Database._default, scope)) {
+      (final Database home, _, final Transaction tx)
+          when identical(tx._database, home) =>
+        Ok(tx),
+      (final Database home, _, final ReadTransaction tx)
+          when identical(tx._database, home) =>
+        Ok(tx),
+      (final Database home, _, _) => Ok(home),
+      (null, null, _) => Err(notOpen(table)),
+      // Defining needs the database to itself, which this transaction holds.
+      (null, final Database fallback, final Transaction tx)
+          when identical(tx._database, fallback) =>
+        Err(_notReady(table)),
+      (null, final Database fallback, final ReadTransaction tx)
+          when identical(tx._database, fallback) =>
+        Err(_notReady(table)),
+      (null, final Database fallback, _) => (await _define(
+        table,
+        fallback,
+      )).flatMap((_) => Ok(fallback)),
+    };
+  }
+
+  /// Defines [table] on [database] once, however many first uses wait.
+  static Future<Result<(), DbError>> _define(
+    DbTable<Object?> table,
+    Database database,
+  ) async => (await database._defineOnce(table)).map((_) => ());
+
+  static DbError _notReady(DbTable<Object?> table) => DbError(
+    DbErrorCode.tableNotReady,
+    '`${table.tableName}` is used for the first time inside a transaction, '
+    'which holds the database it needs to define itself: use the table '
+    'once before the transaction, or define it when opening the database',
+  );
 }
 
 /// A database queried Diesel-style on any [Engine]: the native engine that
@@ -98,7 +147,12 @@ sealed class QueryExecutor {
 base class Database extends QueryExecutor {
   /// A database on an open [connection]. Libraries that wrap an engine build
   /// their `open` on it; apps call [open].
-  Database.connected(this._connection, this.path);
+  ///
+  /// The first database opened becomes the default: tables no database
+  /// holds yet define themselves on it the first time they are used.
+  Database.connected(this._connection, this.path) {
+    _default ??= this;
+  }
 
   /// Where the database lives; the engine decides its files (the native
   /// engine uses `<path>.lmdb`).
@@ -114,7 +168,7 @@ base class Database extends QueryExecutor {
   bool _closed = false;
 
   /// Marks the zone of a running transaction with the transaction: queries
-  /// awaited inside run on it (see [QueryExecutor.of]), and using the
+  /// awaited inside run on it (see [QueryExecutor.using]), and using the
   /// database itself inside a write transaction is caught (it would wait
   /// forever for its own transaction).
   static final Object _scopeZone = Object();
@@ -123,10 +177,14 @@ base class Database extends QueryExecutor {
   /// naming one: the first open database that defined it.
   static final Expando<Database> _homes = Expando('db_dsl home database');
 
-  /// The database a query of [table] runs on by default, or `null` when
-  /// the table is open in no database. Used by the query builders.
-  @internal
-  static Database? homeOf(DbTable<Object?> table) => _homes[table];
+  /// The database tables define themselves on when first used: the first
+  /// database opened, until it closes.
+  static Database? _default;
+
+  /// Definitions in flight, so that concurrent first uses define a table
+  /// once.
+  final Map<DbTable<Object?>, Future<Result<bool, DbError>>> _defining =
+      HashMap.identity();
 
   /// Opens (or creates) the database at [path] on [engine] and defines
   /// [tables] (adding or removing indexes of existing ones).
@@ -184,6 +242,14 @@ base class Database extends QueryExecutor {
     }),
   );
 
+  /// [defineTable], once for concurrent callers.
+  Future<Result<bool, DbError>> _defineOnce(DbTable<Object?> table) =>
+      _defining[table] ??= defineTable(table).whenComplete(() {
+        // A block body on purpose: `remove` answers this very future, and
+        // `whenComplete` would wait for it, that is, for itself.
+        _defining.remove(table);
+      });
+
   /// Drops the table [name] with its rows and indexes; answers whether it
   /// existed.
   Future<Result<bool, DbError>> dropTable(String name) => _guarded(
@@ -222,6 +288,15 @@ base class Database extends QueryExecutor {
   /// does. Answers the rows each one affected.
   Future<Result<List<int>, DbError>> atomicBatch(List<WriteQuery> writes) =>
       _guarded(() async {
+        // Tables no database holds yet define themselves here first.
+        for (final write in writes) {
+          if (_homes[write.table] == null) {
+            if (await _defineOnce(write.table) case Err(:final error)) {
+              return Err(error);
+            }
+          }
+        }
+
         final statements = <WriteStatement>[];
 
         for (final write in writes) {
@@ -318,6 +393,11 @@ base class Database extends QueryExecutor {
     return _writes.run(() async {
       _closed = true;
       _releaseTables();
+
+      if (identical(_default, this)) {
+        _default = null;
+      }
+
       await _changes.close();
       Log.d('Closed the database at $path');
       return _connection.close();

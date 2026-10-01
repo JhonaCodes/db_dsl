@@ -13,6 +13,9 @@ sealed class WriteQuery with _RunsWhenAwaited<int> {
   /// row to insert has no JSON form: a write answers that, never throws.
   Result<WriteStatement, DbError> get prepared;
 
+  /// The table written.
+  DbTable<Object?> get table;
+
   @override
   Future<Result<int, DbError>> _runOn(QueryExecutor executor) =>
       execute(executor);
@@ -37,6 +40,7 @@ final class InsertQuery<T> extends WriteQuery {
   }) : rows = List.unmodifiable(rows);
 
   /// The table.
+  @override
   final DbTable<T> table;
 
   @override
@@ -116,6 +120,7 @@ final class UpdateQuery<T> extends WriteQuery {
   });
 
   /// The table.
+  @override
   final DbTable<T> table;
 
   @override
@@ -203,6 +208,7 @@ final class DeleteQuery<T> extends WriteQuery {
   const DeleteQuery._(this.table, this.condition, this.expected);
 
   /// The table.
+  @override
   final DbTable<T> table;
 
   @override

@@ -190,19 +190,25 @@ final class SelectQuery<T> with _RunsWhenAwaited<List<T>> {
 
   /// The plan the engine chooses, without running the query: on the
   /// database of the table, or [on].
-  Future<Result<QueryPlan, DbError>> explain([Database? on]) =>
-      switch (on ?? Database.homeOf(table)) {
+  Future<Result<QueryPlan, DbError>> explain([Database? on]) async =>
+      switch (on) {
         final Database database => database.explain(this),
-        null => Future.value(Err(QueryExecutor.notOpen(table))),
+        null => (await QueryExecutor.homeFor(
+          table,
+        )).when(ok: (home) => home.explain(this), err: (e) async => Err(e)),
       };
 
   /// The matching rows now, and again after every committed write of the
   /// database of the table (or of [on]) to this table.
-  Stream<Result<List<T>, DbError>> watch([Database? on]) =>
-      switch (on ?? Database.homeOf(table)) {
-        final Database database => database.watch(this),
-        null => Stream.value(Err(QueryExecutor.notOpen(table))),
-      };
+  Stream<Result<List<T>, DbError>> watch([Database? on]) => switch (on) {
+    final Database database => database.watch(this),
+    null => Stream.fromFuture(QueryExecutor.homeFor(table)).asyncExpand(
+      (home) => home.when(
+        ok: (database) => database.watch(this),
+        err: (error) => Stream.value(Err(error)),
+      ),
+    ),
+  };
 
   Future<Result<Object?, DbError>> _aggregate(
     AggregateFunction function,

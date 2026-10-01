@@ -1,13 +1,13 @@
-/// A small blog on db_dsl, run on [MemoryEngine]: typed tables, inserts,
-/// filters, a group by, a left join, a counter and a transaction with a
-/// savepoint.
+/// A small blog on db_dsl, run on [MemoryEngine]: models that carry their
+/// tables, typed fields, inserts, filters, a group by, a left join, a
+/// counter and a transaction with a savepoint.
 ///
 /// ```sh
 /// dart run example/example.dart
 /// ```
 ///
 /// The same code runs on the native engine: open the database with
-/// `LocalDatabase.open` (flutter_local_db) or `DartDb.open` (dart_db)
+/// `LocalDB.init()` (flutter_local_db) or `DartDb.open(path)` (dart_db)
 /// instead of `Database.open(MemoryEngine(), ...)`.
 library;
 
@@ -27,38 +27,18 @@ Future<void> main() async {
 final class BlogTour {
   BlogTour._(this.db);
 
-  /// The `users` table, from the `User` model: generated keys, a composite
-  /// index and a unique one.
-  static final DbTable<User> users = DbTable<User>(
-    'users',
-    key: 'id',
-    fromJson: User.fromJson,
-    autoIncrement: true,
-    indexes: [
-      Index(['city', 'age']),
-      Index.unique(['email']),
-    ],
-  );
-
-  /// The `posts` table, from the `Post` model, indexed by author.
-  static final DbTable<Post> posts = DbTable<Post>(
-    'posts',
-    key: 'id',
-    fromJson: Post.fromJson,
-    indexes: [
-      Index(['author_id']),
-    ],
-  );
-
   /// The database of the tour.
   final Database db;
 
+  static final DbTable<User> _users = User.table;
+  static final DbTable<Post> _posts = Post.table;
+
   /// Opens a blog on [engine] and runs every step, stopping at the first
-  /// error.
+  /// error. No table is listed: each defines itself the first time it is
+  /// used, on this database (the first one opened).
   static Future<Result<void, DbError>> run(Engine engine) => Database.open(
     engine,
     path: 'blog',
-    tables: [users, posts],
   ).flatMap((db) => BlogTour._(db)._steps());
 
   Future<Result<void, DbError>> _steps() async {
@@ -72,7 +52,7 @@ final class BlogTour {
   }
 
   /// `INSERT`: the table generates the user ids.
-  Future<Result<void, DbError>> _seed() => users
+  Future<Result<void, DbError>> _seed() => _users
       .insert(const [
         User(name: 'Ada', city: 'Lima', age: 36, email: 'ada@example.com'),
         User(
@@ -86,7 +66,7 @@ final class BlogTour {
       .getResults()
       .flatMap((inserted) => _seedPosts(inserted.first));
 
-  Future<Result<void, DbError>> _seedPosts(User author) => posts
+  Future<Result<void, DbError>> _seedPosts(User author) => _posts
       .insert([
         Post(id: 'p1', authorId: author.id!, title: 'Types'),
         Post(id: 'p2', authorId: author.id!, title: 'Joins'),
@@ -94,44 +74,35 @@ final class BlogTour {
       .map((affected) => Log.i('Inserted $affected posts'));
 
   /// `SELECT ... WHERE city = 'Lima' AND age > 30 ORDER BY age DESC`.
-  Future<Result<void, DbError>> _filter() => users
-      .filter(
-        users
-            .field<String>('city')
-            .eq('Lima')
-            .and(users.field<int>('age').gt(30)),
-      )
-      .order(users.field<int>('age').desc())
+  Future<Result<void, DbError>> _filter() => _users
+      .filter(_users.city.eq('Lima').and(_users.age.gt(30)))
+      .order(_users.age.desc())
       .map((rows) => Log.i('Lima, over 30: ${rows.map((u) => u.name)}'));
 
   /// `SELECT city, COUNT(*), MAX(age) ... GROUP BY city HAVING COUNT(*) >= 2`.
   Future<Result<void, DbError>> _group() {
     const people = Field<int>('people');
 
-    return users
-        .groupBy([users.field<String>('city')])
+    return _users
+        .groupBy([_users.city])
         .count('people')
-        .max(users.field<int>('age'), 'oldest')
+        .max(_users.age, 'oldest')
         .having(people.ge(2))
         .map((groups) => Log.i('Cities with 2+ people: ${groups.length}'));
   }
 
   /// `SELECT * FROM users LEFT JOIN posts ON posts.author_id = users.id`.
-  Future<Result<void, DbError>> _join() => users
-      .leftJoin(
-        posts,
-        on: users.field<int>('id'),
-        equals: posts.field<int>('author_id'),
-      )
-      .order(users.field<String>('name').asc())
+  Future<Result<void, DbError>> _join() => _users
+      .leftJoin(_posts, on: _users.id, equals: _posts.authorId)
+      .order(_users.name.asc())
       .map((rows) => rows.map(_describe).forEach(Log.i));
 
   /// One line per combined row; a left join without match has no post.
   String _describe(JoinRow row) => row
-      .of(users)
+      .of(_users)
       .flatMap(
         (user) => row
-            .maybe(posts)
+            .maybe(_posts)
             .map(
               (post) => switch (post) {
                 null => '${user.name} wrote nothing',
@@ -142,20 +113,20 @@ final class BlogTour {
       .when(ok: (line) => line, err: (error) => '$error');
 
   /// `UPDATE posts SET views = views + 1`, then `SUM(views)`.
-  Future<Result<void, DbError>> _count() => posts
+  Future<Result<void, DbError>> _count() => _posts
       .update()
-      .increment(posts.field<int>('views'), 1)
-      .flatMap((_) => posts.all().sum(posts.field<int>('views')))
+      .increment(_posts.views, 1)
+      .flatMap((_) => _posts.all().sum(_posts.views))
       .map((views) => Log.i('Total views: $views'));
 
   /// A transaction whose savepoint fails: only the savepoint is undone.
   /// Queries awaited inside run on the transaction.
   Future<Result<void, DbError>> _transaction() => db
       .transaction<bool>((tx) async {
-        final renamed = await posts
+        final renamed = await _posts
             .update()
-            .filter(posts.field<String>('id').eq('p1'))
-            .set(posts.field<String>('title'), 'Typed tables');
+            .filter(_posts.id.eq('p1'))
+            .set(_posts.title, 'Typed tables');
 
         if (renamed case Err(:final error)) {
           return Err(error);
@@ -163,7 +134,7 @@ final class BlogTour {
 
         // The duplicate key fails the savepoint; the rename stays.
         final duplicate = await tx.savepoint(
-          (_) => posts.insert([
+          (_) => _posts.insert([
             const Post(id: 'p1', authorId: 1, title: 'Duplicate'),
           ]),
         );
@@ -172,12 +143,17 @@ final class BlogTour {
       })
       .flatMap((rolledBack) {
         Log.i('Savepoint rolled back: $rolledBack');
-        return posts.find('p1');
+        return _posts.find('p1');
       })
       .map((post) => Log.i('p1 is now "${post?.title}"'));
 }
 
-/// A user of the blog.
+// The `extension <Model>Fields` after each model is not typed by hand: the
+// db_dsl_lints plugin warns on a table whose fields are not written yet and
+// writes them from the model's `toJson` with one quick fix, again whenever
+// the model changes. It is plain code, without generated files.
+
+/// A user of the blog: a plain model that carries its table.
 final class User {
   /// A user; [id] is generated on insert.
   const User({
@@ -195,6 +171,18 @@ final class User {
     city: json['city']! as String,
     age: json['age']! as int,
     email: json['email'] as String?,
+  );
+
+  /// The `users` table: generated keys, a composite index and a unique one.
+  static final DbTable<User> table = DbTable<User>(
+    'users',
+    key: 'id',
+    fromJson: User.fromJson,
+    autoIncrement: true,
+    indexes: [
+      Index(['city', 'age']),
+      Index.unique(['email']),
+    ],
   );
 
   /// Primary key, generated by the table.
@@ -222,7 +210,25 @@ final class User {
   };
 }
 
-/// A post of the blog.
+/// The fields of `User` for queries, read from its `toJson`.
+extension UserFields on DbTable<User> {
+  /// The stored `id`.
+  Field<int> get id => field('id');
+
+  /// The stored `name`.
+  Field<String> get name => field('name');
+
+  /// The stored `city`.
+  Field<String> get city => field('city');
+
+  /// The stored `age`.
+  Field<int> get age => field('age');
+
+  /// The stored `email`.
+  Field<String> get email => field('email');
+}
+
+/// A post of the blog: a plain model that carries its table.
 final class Post {
   /// A post [id] by [authorId].
   const Post({
@@ -238,6 +244,16 @@ final class Post {
     authorId: json['author_id']! as int,
     title: json['title']! as String,
     views: json['views']! as int,
+  );
+
+  /// The `posts` table, indexed by author.
+  static final DbTable<Post> table = DbTable<Post>(
+    'posts',
+    key: 'id',
+    fromJson: Post.fromJson,
+    indexes: [
+      Index(['author_id']),
+    ],
   );
 
   /// Primary key.
@@ -259,4 +275,19 @@ final class Post {
     'title': title,
     'views': views,
   };
+}
+
+/// The fields of `Post` for queries, read from its `toJson`.
+extension PostFields on DbTable<Post> {
+  /// The stored `id`.
+  Field<String> get id => field('id');
+
+  /// The stored `author_id`.
+  Field<int> get authorId => field('author_id');
+
+  /// The stored `title`.
+  Field<String> get title => field('title');
+
+  /// The stored `views`.
+  Field<int> get views => field('views');
 }

@@ -1,0 +1,10 @@
+# pub reads this file instead of .gitignore: its rules are repeated here.
+.dart_tool/
+build/
+pubspec.lock
+
+# Published as its own package.
+db_dsl_lints/
+
+# A release tool of the repository, not part of the package.
+tool/publish_lints.sh

@@ -88,6 +88,11 @@ enum DbErrorCode {
   /// table is open in none.
   notOpen('NotOpen'),
 
+  /// *Dart side*: a table was used for the first time inside a transaction.
+  /// Defining it needs the database to itself, which the transaction holds,
+  /// so it is refused instead of waiting forever.
+  tableNotReady('TableNotReady'),
+
   /// The engine speaks another protocol version.
   unsupportedProtocol('UnsupportedProtocol'),
 
@@ -158,7 +163,8 @@ sealed class DbError {
       DbErrorCode.schemaMismatch ||
       DbErrorCode.invalidRequest ||
       DbErrorCode.keyTooLarge ||
-      DbErrorCode.rowMapping => SchemaError._(code, message, wire),
+      DbErrorCode.rowMapping ||
+      DbErrorCode.tableNotReady => SchemaError._(code, message, wire),
       DbErrorCode.transactionClosed ||
       DbErrorCode.transactionAborted ||
       DbErrorCode.transactionExpired ||

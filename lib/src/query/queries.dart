@@ -26,8 +26,9 @@ part 'builders/join_query.dart';
 part 'builders/associations.dart';
 
 /// Makes a finished query awaitable: `await users.filter(...)` runs it on
-/// the implicit executor of its table (see [QueryExecutor.of]) — the loaded
-/// database, or the transaction running around it.
+/// the implicit executor of its table (see [QueryExecutor.using]) — the
+/// database that holds it (the default one, the first time it is used), or
+/// the transaction running around it.
 ///
 /// Why a `Future`: running is the one thing done with a finished query, so
 /// awaiting it is enough, as in Supabase's builders. Naming an executor is

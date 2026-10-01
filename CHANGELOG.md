@@ -1,3 +1,25 @@
+## 0.2.0
+
+- **Tables define themselves.** No table has to be listed when a database
+  opens: the first database opened is the default one, and a table no
+  database holds yet defines itself there the first time it is used
+  (created if new, new indexes built, removed ones dropped). Concurrent
+  first uses define it once. `Database.open(..., tables:)` stays, to define
+  tables up front.
+- A table used for the first time inside a transaction answers
+  `Err(DbErrorCode.tableNotReady)` (a `SchemaError`) instead of waiting
+  forever for the database the transaction holds. `atomicBatch` defines the
+  tables it writes before it begins.
+- `explain()` and `watch()` without a database run on the default one too.
+- `DbErrorCode.notOpen` now means that no database is open at all.
+- **Breaking:** `QueryExecutor.of` and `Database.homeOf` are no longer
+  public; queries resolve their database when awaited.
+- The README and the example show the final form: the model carries its
+  table (`static final table = DbTable<User>(...)`), and queries read
+  `t.city.eq('Lima')` through an `extension UserFields on DbTable<User>`
+  that the new [db_dsl_lints](https://pub.dev/packages/db_dsl_lints)
+  analyzer plugin writes from the model and checks.
+
 ## 0.1.0
 
 First release.
