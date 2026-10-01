@@ -1,3 +1,17 @@
+## 0.2.7
+
+### Added
+- `NativeEngine` runs on the C ABI v2 of offline_first_core (0.7.6 and
+  later) when `NativeSymbols.abiV2` is given (`AbiV2Symbols`): `u64`
+  handles the library validates, so a handle used after it was closed
+  answers an error instead of undefined behaviour, and requests and
+  responses travel as bytes with a length. Without it, the ABI v1 is used
+  as before; the key-value API stays on the ABI v1.
+  `NativeConnection.usesAbiV2` says which one a connection uses.
+
+### Changed
+- One worker isolate per library and ABI (before: per library).
+
 ## 0.2.6
 
 Documentation only; no change in behaviour.

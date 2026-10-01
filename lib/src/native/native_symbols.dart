@@ -28,6 +28,29 @@ typedef OfcHandleCall = Pointer<Utf8> Function(Pointer<Void>);
 typedef OfcHandleStringCall =
     Pointer<Utf8> Function(Pointer<Void>, Pointer<Utf8>);
 
+/// `ldb_open(path, path_len, options, options_len, out, response) ->
+/// status` of the ABI v2.
+typedef LdbOpen =
+    Int32 Function(
+      Pointer<Uint8>,
+      Size,
+      Pointer<Uint8>,
+      Size,
+      Pointer<Uint64>,
+      Pointer<Uint64>,
+    );
+
+/// `ldb_execute(database, request, request_len, response) -> status`.
+typedef LdbExecute =
+    Int32 Function(Uint64, Pointer<Uint8>, Size, Pointer<Uint64>);
+
+/// `ldb_buffer_view(buffer, data, len) -> status`.
+typedef LdbBufferView =
+    Int32 Function(Uint64, Pointer<Pointer<Uint8>>, Pointer<Size>);
+
+/// `ldb_buffer_release(buffer)` and `ldb_close(database)` -> status.
+typedef LdbHandleCall = Int32 Function(Uint64);
+
 /// Where the functions of a loaded offline_first_core live.
 ///
 /// Why addresses and not a library path: the library that bundles the
@@ -36,13 +59,15 @@ typedef OfcHandleStringCall =
 /// (`Native.addressOf`), so db_dsl never loads a binary itself.
 final class NativeSymbols {
   /// The query API symbols, plus [keyValue] when the library also exposes
-  /// the key-value API.
+  /// the key-value API, and [abiV2] when it has the ABI v2 (offline_first_core
+  /// 0.7.6 and later): the query API then runs on it.
   const NativeSymbols({
     required this.open,
     required this.execute,
     required this.freeString,
     required this.close,
     this.keyValue,
+    this.abiV2,
   });
 
   /// `ofc_open`.
@@ -59,6 +84,9 @@ final class NativeSymbols {
 
   /// The key-value API (the 0.5 C ABI kept by offline_first_core).
   final KeyValueSymbols? keyValue;
+
+  /// The ABI v2 (`include/localdb.h` of offline_first_core), when given.
+  final AbiV2Symbols? abiV2;
 
   /// The addresses as plain integers, the form that crosses to the worker
   /// isolate.
@@ -110,5 +138,44 @@ final class KeyValueSymbols {
     deleteById.address,
     getAll.address,
     clear.address,
+  ];
+}
+
+/// The ABI v2 of offline_first_core (0.7.6 and later): `u64` handles that
+/// the library validates, so a handle used after it was closed answers an
+/// error instead of undefined behaviour, and requests and responses as
+/// bytes with a length.
+final class AbiV2Symbols {
+  /// Every function of the ABI v2.
+  const AbiV2Symbols({
+    required this.open,
+    required this.execute,
+    required this.bufferView,
+    required this.bufferRelease,
+    required this.close,
+  });
+
+  /// `ldb_open`.
+  final Pointer<NativeFunction<LdbOpen>> open;
+
+  /// `ldb_execute`.
+  final Pointer<NativeFunction<LdbExecute>> execute;
+
+  /// `ldb_buffer_view`.
+  final Pointer<NativeFunction<LdbBufferView>> bufferView;
+
+  /// `ldb_buffer_release`.
+  final Pointer<NativeFunction<LdbHandleCall>> bufferRelease;
+
+  /// `ldb_close`.
+  final Pointer<NativeFunction<LdbHandleCall>> close;
+
+  /// The addresses, in declaration order.
+  List<int> get addresses => [
+    open.address,
+    execute.address,
+    bufferView.address,
+    bufferRelease.address,
+    close.address,
   ];
 }
