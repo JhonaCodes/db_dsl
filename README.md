@@ -393,10 +393,12 @@ JSON response ──► Result              rows through fromJson; errors as DbE
 - **`watch`** listens to the tables each committed write touched and reloads
   the query; a burst of commits while a reload is in flight causes one more
   reload, not one per commit.
-- **The native engine** runs every FFI call on one worker isolate per native
-  library, so a durable commit never blocks the caller's isolate (the UI, in
-  an app). The worker stops when the last database closes and no call is
-  pending, so a program that closes its databases ends by itself.
+- **The native engine** runs every FFI call on a worker isolate, one per
+  native library in each isolate that uses it, so a durable commit never
+  blocks the caller's isolate (the UI, in an app). Isolates that open the
+  same path share the process's one LMDB environment. A worker stops when
+  its last database closes and no call is pending, so a program that closes
+  its databases ends by itself.
 
 ## Using it well
 
