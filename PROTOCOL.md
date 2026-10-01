@@ -479,7 +479,7 @@ in `update`. The answer is `{"affected": n, "rows": []}`.
 | `tables` | — | `{"tables": [table, ...]}` |
 | `execute` | `statement` | the answer of the statement |
 | `batch` | `statements`: a list | `{"results": [answer, ...]}` |
-| `explain` | `query`: a `select` without `op` | `{"plan": plan}` |
+| `explain` | `query`: a `select` or `join` without `op` | `{"plan": plan}` |
 | `begin` | `mode`, `timeout_ms` | `{"transaction": id}` |
 | `tx_execute` | `transaction`, `statement` | the answer of the statement |
 | `savepoint`, `release`, `rollback_to`, `commit`, `rollback` | `transaction` | `{}` |
@@ -520,11 +520,19 @@ in `update`. The answer is `{"affected": n, "rows": []}`.
   leading field of an index may be answered with lookups of only the named
   keys (offline_first_core does from 0.7.4).
 
-  Engine extension, not part of the v1 conformance: offline_first_core 0.7.3
-  and later also explain a **join** query (a `query` with `from` instead of
-  `table`), answering `{"strategy": "hash_join", "tables": [{"table",
-  "as", "access"}, ...], "filter": "after_join" | "none"}`. Clients should
-  not rely on other engines answering it.
+  A `query` with `from` instead of `table` is a **join** (the fields of a
+  `join` statement without `op`); its plan is:
+
+  ```json
+  {"strategy": "hash_join", "tables": [{"table": "users", "as": "users",
+   "access": "full_scan"}, ...], "filter": "after_join"}
+  ```
+
+  `tables` lists every table in join order with its alias and access path;
+  `filter` is `after_join` (it runs on the combined rows) or `none`. An
+  undefined table is `TableNotFound`, a bad alias `InvalidRequest`.
+  offline_first_core (from 0.7.3) and `MemoryEngine` (from db_dsl 0.2.5)
+  hash each joined table by its join field over full scans.
 - `info` describes the database: `lmdb` is the storage and its version
   (`"memory"` for `MemoryEngine`), `map_size` the current size of the memory
   map in bytes (0 when nothing is mapped).
@@ -1186,6 +1194,61 @@ ones left.
         "title": "Joins"
       }
     ]
+  }
+}
+```
+
+#### Explain a join without running it
+
+```json
+{
+  "v": 1,
+  "op": "explain",
+  "query": {
+    "from": {
+      "table": "users",
+      "as": "users"
+    },
+    "joins": [
+      {
+        "table": "posts",
+        "as": "posts",
+        "kind": "left",
+        "on": {
+          "left": "users.id",
+          "right": "author_id"
+        }
+      }
+    ],
+    "filter": {
+      "op": "eq",
+      "field": "users.city",
+      "value": "Lima"
+    }
+  }
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "plan": {
+      "strategy": "…",
+      "tables": [
+        {
+          "table": "users",
+          "as": "users",
+          "access": "…"
+        },
+        {
+          "table": "posts",
+          "as": "posts",
+          "access": "…"
+        }
+      ],
+      "filter": "after_join"
+    }
   }
 }
 ```

@@ -152,6 +152,38 @@ final class MemoryExecutor {
         ),
       );
 
+  /// The plan of the join [query], without running it: [MemoryEngine]
+  /// reads every table in full, hashes each joined one by its join field,
+  /// and filters the combined rows, like offline_first_core.
+  Result<JoinPlan, DbError> explainJoin(JoinStatement query) {
+    final tables = <JoinPlanTable>[];
+
+    for (final (name, alias) in [
+      (query.table, query.alias),
+      for (final join in query.joins) (join.table, join.alias),
+    ]) {
+      if (_table(name) case Err(:final error)) {
+        return Err(error);
+      }
+
+      tables.add(
+        JoinPlanTable(table: name, alias: alias, access: PlanAccess.fullScan),
+      );
+    }
+
+    if (MemoryJoin.check(query) case final DbError error) {
+      return Err(error);
+    }
+
+    return Ok(
+      JoinPlan(
+        strategy: 'hash_join',
+        tables: tables,
+        filter: query.filter == null ? 'none' : 'after_join',
+      ),
+    );
+  }
+
   Result<MemoryTable, DbError> _table(String name) =>
       switch (state.tables[name]) {
         final MemoryTable table => Ok(table),

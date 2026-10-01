@@ -110,6 +110,9 @@ final class MemoryConnection implements EngineConnection {
     ExplainRequest(:final query) => MemoryExecutor(
       _store.committed,
     ).explain(query),
+    ExplainJoinRequest(:final query) => MemoryExecutor(
+      _store.committed,
+    ).explainJoin(query),
     BeginRequest(:final mode, :final idleTimeout) => Ok(
       await _store.begin(mode, idleTimeout),
     ),

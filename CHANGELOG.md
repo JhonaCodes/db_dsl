@@ -1,3 +1,17 @@
+## 0.2.5
+
+### Added
+- `JoinQuery.explain()` and `Database.explainJoin`: how the engine would
+  run a join, without running it (`JoinPlan`: the strategy, every table in
+  join order with its alias and access path, and where the filter runs).
+  The protocol's `explain` with a join `query` is now part of version 1:
+  `MemoryEngine` answers it as offline_first_core does (`hash_join` over
+  full scans), with a conformance case and a replayed example.
+
+### Changed
+- The sealed `ProtocolRequest` family gained `ExplainJoinRequest` (see
+  "Status" in the README).
+
 ## 0.2.4
 
 ### Added

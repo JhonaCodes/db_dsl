@@ -76,6 +76,17 @@ sealed class ProtocolRequest<O> {
             _ => _invalid(json),
           },
         ),
+      {
+        'v': version,
+        'op': 'explain',
+        'query': {'from': Object()} && final Map<Object?, Object?> query,
+      } =>
+        JoinStatement.decode({...query, 'op': 'join'}).flatMap(
+          (decoded) => switch (decoded) {
+            final JoinStatement join => Ok(ExplainJoinRequest(join)),
+            _ => _invalid(json),
+          },
+        ),
       {'v': version, 'op': 'begin'} => _begin(json),
       {
         'v': version,
@@ -336,6 +347,33 @@ final class ExplainRequest extends ProtocolRequest<QueryPlan> {
 
   @override
   Map<String, Object?> encodeOutput(QueryPlan output) => {
+    'plan': output.toJson(),
+  };
+}
+
+/// `explain` of a join: how the engine would combine the tables of
+/// [query], without running it.
+final class ExplainJoinRequest extends ProtocolRequest<JoinPlan> {
+  /// Explains [query].
+  const ExplainJoinRequest(this.query);
+
+  /// The join.
+  final JoinStatement query;
+
+  @override
+  String get op => 'explain';
+
+  @override
+  Map<String, Object?> get fields => {
+    'query': {...query.toJson()}..remove('op'),
+  };
+
+  @override
+  Result<JoinPlan, DbError> decodeOutput(Object? payload) =>
+      ProtocolRequest._field(payload, 'plan', JoinPlan.decode);
+
+  @override
+  Map<String, Object?> encodeOutput(JoinPlan output) => {
     'plan': output.toJson(),
   };
 }

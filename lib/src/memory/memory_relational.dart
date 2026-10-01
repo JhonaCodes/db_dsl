@@ -272,7 +272,7 @@ abstract final class MemoryJoin {
     List<Map<String, Object?>> from,
     List<List<Map<String, Object?>>> joined,
   ) {
-    if (_check(statement) case final DbError error) {
+    if (check(statement) case final DbError error) {
       return Err(error);
     }
 
@@ -328,7 +328,9 @@ abstract final class MemoryJoin {
     };
   }
 
-  static DbError? _check(JoinStatement statement) {
+  /// Why the aliases of [statement] are invalid, or `null`: empty,
+  /// containing `.`, or repeated.
+  static DbError? check(JoinStatement statement) {
     final aliases = [
       statement.alias,
       for (final join in statement.joins) join.alias,

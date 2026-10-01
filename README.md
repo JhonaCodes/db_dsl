@@ -259,6 +259,9 @@ uses an index:
 final plan = await users.filter(users.city.eq('Lima')).explain();
 // offline_first_core: access index_scan over by_city_age.
 // MemoryEngine always answers full_scan: it does not emulate the planner.
+
+final joined = await users.innerJoin(posts, on: users.id, equals: posts.authorId).explain();
+// strategy hash_join, every table with its access path, filter after_join or none.
 ```
 
 ## Many-to-many

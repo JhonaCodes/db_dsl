@@ -1,6 +1,6 @@
 name: db_dsl
 description: "A Diesel-style query language for Dart: typed tables, filters, joins, aggregates and transactions sent as a documented protocol to any engine (native LMDB, in memory, or your own)."
-version: 0.2.4
+version: 0.2.5
 repository: https://github.com/JhonaCodes/db_dsl
 issue_tracker: https://github.com/JhonaCodes/db_dsl/issues
 

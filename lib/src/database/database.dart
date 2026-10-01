@@ -373,6 +373,11 @@ base class Database extends QueryExecutor {
   Future<Result<QueryPlan, DbError>> explain(SelectQuery<Object?> query) =>
       _guarded(() => _send(ExplainRequest(query.statement)));
 
+  /// How the engine would run the join [query], without running it: the
+  /// strategy, every table with its access path, and where the filter runs.
+  Future<Result<JoinPlan, DbError>> explainJoin(JoinQuery query) =>
+      _guarded(() => _send(ExplainJoinRequest(query.statement)));
+
   /// The rows of [query] now, and again after every committed write of this
   /// database to its table.
   Stream<Result<List<T>, DbError>> watch<T>(SelectQuery<T> query) =>

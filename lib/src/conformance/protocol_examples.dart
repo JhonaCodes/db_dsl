@@ -306,6 +306,35 @@ abstract final class ProtocolExamples {
       },
     ),
     ProtocolExample(
+      'Explain a join without running it',
+      {
+        'v': 1,
+        'op': 'explain',
+        'query': {
+          'from': {'table': 'users', 'as': 'users'},
+          'joins': [
+            {
+              'table': 'posts',
+              'as': 'posts',
+              'kind': 'left',
+              'on': {'left': 'users.id', 'right': 'author_id'},
+            },
+          ],
+          'filter': {'op': 'eq', 'field': 'users.city', 'value': 'Lima'},
+        },
+      },
+      ok: {
+        'plan': {
+          'strategy': any,
+          'tables': [
+            {'table': 'users', 'as': 'users', 'access': any},
+            {'table': 'posts', 'as': 'posts', 'access': any},
+          ],
+          'filter': 'after_join',
+        },
+      },
+    ),
+    ProtocolExample(
       'Left join: every user, with their posts or null',
       {
         'v': 1,

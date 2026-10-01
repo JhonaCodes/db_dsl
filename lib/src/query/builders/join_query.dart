@@ -137,6 +137,16 @@ final class JoinQuery with _RunsWhenAwaited<List<JoinRow>> {
     offset: skipped,
   );
 
+  /// How the engine would run this join, without running it: on the
+  /// database of the `from` table, or [on].
+  Future<Result<JoinPlan, DbError>> explain([Database? on]) async =>
+      switch (on) {
+        final Database database => database.explainJoin(this),
+        null => (await QueryExecutor.homeFor(
+          from,
+        )).when(ok: (home) => home.explainJoin(this), err: (e) async => Err(e)),
+      };
+
   @override
   DbTable<Object?> get _homeTable => from;
 

@@ -494,6 +494,68 @@ abstract final class _RelationalCases {
         await db.close();
       },
     ),
+    ConformanceCase(
+      'relational',
+      'a join explains its strategy and every table without running',
+      (host) async {
+        final (db, authors, posts, comments) = await _blog(host);
+        final join = authors
+            .innerJoin(
+              posts,
+              on: authors.field<String>('id'),
+              equals: posts.field<String>('author_id'),
+            )
+            .leftJoin(
+              comments,
+              on: posts.field<String>('id'),
+              equals: comments.field<String>('post_id'),
+            );
+
+        final plan = Check.ok(await join.explain(db), 'explain');
+        Check.isTrue(plan.strategy.isNotEmpty, 'a strategy is named');
+        Check.equals(
+          [for (final table in plan.tables) (table.table, table.alias)],
+          [
+            ('authors', 'authors'),
+            ('posts', 'posts'),
+            ('comments', 'comments'),
+          ],
+          'every table in join order, with its alias',
+        );
+        Check.isTrue(
+          plan.tables.every((table) => table.access != PlanAccess.unknown),
+          'every access path is a known one',
+        );
+        Check.equals(plan.filter, 'none', 'no filter');
+
+        final filtered = Check.ok(
+          await join
+              .filter(authors.field<String>('city').eq('Lima'))
+              .explain(db),
+          'explain filtered',
+        );
+        Check.equals(filtered.filter, 'after_join', 'the filter runs after');
+        Check.equals(
+          Check.ok(await authors.all().count(db), 'count'),
+          3,
+          'explaining ran nothing',
+        );
+
+        final ghost = JsonTable('ghost');
+        Check.fails(
+          await authors
+              .innerJoin(
+                ghost,
+                on: authors.field<String>('id'),
+                equals: ghost.field<String>('id'),
+              )
+              .explain(db),
+          DbErrorCode.tableNotFound,
+          'explain a join with an undefined table',
+        );
+        await db.close();
+      },
+    ),
     ConformanceCase('relational', 'joining an undefined table fails', (
       host,
     ) async {

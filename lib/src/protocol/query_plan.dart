@@ -96,3 +96,96 @@ final class QueryPlan {
   @override
   String toString() => 'QueryPlan(${toJson()})';
 }
+
+/// How an engine will run a join, without running it.
+final class JoinPlan {
+  /// A plan of [strategy] over [tables], filtering [filter].
+  const JoinPlan({
+    required this.strategy,
+    required this.tables,
+    required this.filter,
+  });
+
+  /// How the tables are combined (offline_first_core and [MemoryEngine]
+  /// answer `hash_join`: each joined table is hashed by its join field).
+  final String strategy;
+
+  /// Every table in join order, with its alias and how its rows are read.
+  final List<JoinPlanTable> tables;
+
+  /// Where the filter runs: `after_join` (on the combined rows), or `none`.
+  final String filter;
+
+  /// The protocol form.
+  Map<String, Object?> toJson() => {
+    'strategy': strategy,
+    'tables': [for (final table in tables) table.toJson()],
+    'filter': filter,
+  };
+
+  /// The plan encoded in [json].
+  static Result<JoinPlan, DbError> decode(Object? json) {
+    if (json case {
+      'strategy': final String strategy,
+      'tables': final List<Object?> tables,
+      'filter': final String filter,
+    }) {
+      final decoded = <JoinPlanTable>[];
+
+      for (final table in tables) {
+        switch (table) {
+          case {
+            'table': final String name,
+            'as': final String alias,
+            'access': final String access,
+          }:
+            decoded.add(
+              JoinPlanTable(
+                table: name,
+                alias: alias,
+                access: PlanAccess.fromWire(access),
+              ),
+            );
+          default:
+            return Err(_bad(json));
+        }
+      }
+
+      return Ok(JoinPlan(strategy: strategy, tables: decoded, filter: filter));
+    }
+
+    return Err(_bad(json));
+  }
+
+  static DbError _bad(Object? json) =>
+      DbError(DbErrorCode.unsupportedProtocol, 'Bad join plan: $json');
+
+  @override
+  String toString() => 'JoinPlan(${toJson()})';
+}
+
+/// One table of a [JoinPlan].
+final class JoinPlanTable {
+  /// [table], under [alias], read with [access].
+  const JoinPlanTable({
+    required this.table,
+    required this.alias,
+    required this.access,
+  });
+
+  /// The table.
+  final String table;
+
+  /// Its key in the combined rows.
+  final String alias;
+
+  /// How its rows are read.
+  final PlanAccess access;
+
+  /// The protocol form.
+  Map<String, Object?> toJson() => {
+    'table': table,
+    'as': alias,
+    'access': access.wire,
+  };
+}

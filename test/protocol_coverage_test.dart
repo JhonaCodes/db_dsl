@@ -75,7 +75,7 @@ abstract final class _Kinds {
         TablesRequest() => 'tables',
         ExecuteRequest() => 'execute',
         BatchRequest() => 'batch',
-        ExplainRequest() => 'explain',
+        ExplainRequest() || ExplainJoinRequest() => 'explain',
         BeginRequest() => 'begin',
         TransactionExecuteRequest() => 'tx_execute',
         TransactionControlRequest(:final control) => control.wire,
