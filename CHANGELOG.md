@@ -1,3 +1,13 @@
+## 0.2.6
+
+Documentation only; no change in behaviour.
+
+- `DbErrorCode.mapFull` and PROTOCOL.md: besides the maximum size, a
+  transaction that writes past the end of the memory map before it grows
+  answers `MapFull`, and running it again finds room. offline_first_core
+  0.7.6 grows the map ahead, so only a transaction that alone writes more
+  than half of the map meets it.
+
 ## 0.2.5
 
 ### Added

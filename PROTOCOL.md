@@ -699,7 +699,7 @@ every change of the local row.
 | `AffectedRowsMismatch` | A write did not match the number of rows in `expect`. |
 | `CorruptRecord` | A stored row cannot be decoded. |
 | `KeyTooLarge` | A primary key or index key is over 511 bytes. |
-| `MapFull` | The database reached its maximum size. |
+| `MapFull` | The database reached its maximum size, or a transaction wrote past the end of the memory map before it grew: running it again finds room. |
 | `LegacyFormat` | The files were written by LMDB 0.9 (flutter_local_db 1.x, dart_db 0.2); they are left untouched. |
 | `StorageError` | The storage reported an error. |
 | `IoError` | A file system operation failed. |

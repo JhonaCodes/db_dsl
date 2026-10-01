@@ -40,7 +40,11 @@ enum DbErrorCode {
   /// A key or an indexed value is too large for the storage.
   keyTooLarge('KeyTooLarge'),
 
-  /// The database reached its maximum size (`DbOptions.maxSize`).
+  /// The database reached its maximum size (`DbOptions.maxSize`), or a
+  /// transaction wrote past the end of the memory map before it grew. The
+  /// map grows ahead of the writes (offline_first_core 0.7.6), so the second
+  /// case only happens when one transaction writes more than half of the
+  /// map: run the transaction again (it then finds room).
   mapFull('MapFull'),
 
   /// The files were written by LMDB 0.9 (flutter_local_db 1.x, dart_db 0.2),
