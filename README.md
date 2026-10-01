@@ -348,6 +348,83 @@ final message = switch (error) {
 `error.code` (`DbErrorCode`) names the exact cause; code reacts to it, never
 to `error.message`.
 
+## How it works
+
+```
+users.filter(users.city.eq('Lima'))   a builder: nothing runs yet
+        │  await
+        ▼
+the executor                          the transaction of the current zone,
+                                      else the table's database, else the
+                                      default one (defining the table first)
+        │
+        ▼
+Statement ──► JSON request            protocol v1 (PROTOCOL.md)
+        │
+        ▼
+EngineConnection.send                 NativeEngine: FFI calls on a worker isolate
+                                      MemoryEngine: the same semantics in Dart
+        │
+        ▼
+JSON response ──► Result              rows through fromJson; errors as DbError
+```
+
+- **A query is a value until it is awaited.** Builders (`filter`, `order`,
+  `insert`, `update().set()`…) only describe the statement. Each implements
+  `Future<Result<…>>`, so `await` is what sends it.
+- **Rows are your models' JSON.** A row is written as `toJson()` writes it
+  (nested objects, dates and enums converted by Dart's JSON convention) and
+  read back with the table's `fromJson`. A field compares values in that same
+  stored form.
+- **Choosing where a query runs.** An explicit database (`load(other)`,
+  `execute(other)`) wins. Otherwise a query awaited inside a transaction body
+  runs on that transaction (the body runs in a zone that carries it), and
+  any other query runs on the database that holds its table. A table that no
+  database holds yet defines itself on the default database (the first one
+  opened) and stays there; concurrent first uses wait for one definition.
+- **One writer at a time.** Each `Database` queues its writes in Dart, so a
+  write sent while a transaction is open waits its turn instead of blocking
+  the engine; reads do not queue.
+- **Transactions** begin on the engine, send their statements with the
+  transaction's id, and commit when the body answers `Ok` (rollback on
+  `Err`). A savepoint is a nested level of the same transaction. One that
+  receives nothing for 30 seconds (`idleTimeout`) is rolled back by the
+  engine.
+- **`watch`** listens to the tables each committed write touched and reloads
+  the query; a burst of commits while a reload is in flight causes one more
+  reload, not one per commit.
+- **The native engine** runs every FFI call on one worker isolate per native
+  library, so a durable commit never blocks the caller's isolate (the UI, in
+  an app). The worker stops when the last database closes and no call is
+  pending, so a program that closes its databases ends by itself.
+
+## Using it well
+
+- **Open the database once, at start-up, and keep it open.** The first one
+  opened is the default one, where tables define themselves.
+- **Let the analyzer plugin write the fields**, and run `dart analyze` in CI
+  (also in Flutter projects; `flutter analyze` does not report plugin
+  diagnostics yet).
+- **Use a table once before its first transaction**, or list it when
+  opening (`tables:`): a first use inside a transaction answers
+  `tableNotReady`.
+- **Await queries inside the transaction body.** Using the database itself
+  there would wait for its own transaction, so it answers
+  `transactionReentrancy`; keep the body short (it is rolled back after 30
+  seconds of inactivity).
+- **Group writes**: one transaction or `atomicBatch` instead of one durable
+  commit per row.
+- **Declare an index for each filter or order you run on a large table**,
+  and check it with `explain()`; a `full_scan` reads every row.
+- **Write `order` whenever order matters**: without it, the order of the
+  rows is unspecified, as in SQL.
+- **Store dates in UTC** (`toUtc()`), or as numbers, if you sort or range
+  over them.
+- **Switch on the sealed `DbError`** and on `error.code`, never on
+  `error.message`.
+- **Test on `MemoryEngine`**, and close each test's database in `tearDown`
+  so the next test's database becomes the default one.
+
 ## Testing with MemoryEngine
 
 `MemoryEngine` keeps every database in memory with the semantics of the
@@ -393,8 +470,9 @@ replays them, and a test keeps the document equal to them.
 
 ## Status
 
-db_dsl is at **0.2.0**: the API may still change before 1.0. The protocol is
-version 1 and only grows (see "Compatibility" in PROTOCOL.md).
+db_dsl stays in **0.2.x**: releases add and fix, and never break code
+written against 0.2. The protocol is version 1 and only grows (see
+"Compatibility" in PROTOCOL.md).
 
 ## License
 

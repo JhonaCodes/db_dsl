@@ -1,3 +1,11 @@
+## 0.1.1
+
+Documentation only; no change in behaviour.
+
+- README: "How it works" (how the plugin finds the tables, reads what a
+  model stores, compares and writes the fields), and the setup note that
+  `flutter analyze` does not report plugin diagnostics: run `dart analyze`.
+
 ## 0.1.0
 
 First release: the analyzer plugin of db_dsl.

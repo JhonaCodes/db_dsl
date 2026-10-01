@@ -1,3 +1,15 @@
+## 0.2.1
+
+Documentation only; no change in behaviour.
+
+- README: "How it works" (from a builder to the engine and back, how a
+  query picks its executor, the write queue, transactions, `watch`, the
+  native worker isolate) and "Using it well" (the practices the library
+  relies on: open once, `tableNotReady`, `transactionReentrancy`, grouping
+  writes, indexes and `explain`, ordering, UTC dates, errors, tests).
+- The versioning policy: releases stay in 0.2.x and never break code written
+  against 0.2.
+
 ## 0.2.0
 
 - **Tables define themselves.** No table has to be listed when a database

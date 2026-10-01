@@ -119,6 +119,32 @@ or on its extension, does the same on demand.
 A field with its own `encode` or `decode` stores its value its own way, so
 its type is not checked.
 
+## How it works
+
+The analysis server loads the plugin in an isolate of its own (Dart's
+analyzer plugin system, `analysis_server_plugin`), and runs it on every
+resolved file:
+
+1. **Find the tables.** For each `DbTable<T>(...)` and each `field(...)` on a
+   `DbTable<T>` — inside an `extension ... on DbTable<T>` or on an explicit
+   table — it resolves `T`, and only for the `DbTable` and `Field` declared
+   by `package:db_dsl`.
+2. **Read what `T` stores.** It parses the library that declares `T` and
+   reads the map that `toJson` returns: each key, the member of `T` it comes
+   from, that member's static type, and whether a `DateTime` is written as
+   ISO 8601 or as epoch milliseconds or microseconds. A nested model is read
+   the same way through its own `toJson`. A `toJson:` passed to the table
+   replaces the model's.
+3. **Compare.** The table's `key:`, the names in `Index([...])`, each
+   `field('path')` and its `Field<V>` type are checked against what is
+   stored; the getters of every visible extension on `DbTable<T>` are
+   checked for completeness.
+4. **Write.** The quick fixes and the assist build their edits from the
+   same reading, so the fields they write always pass the checks.
+
+Nothing runs in your app: the plugin only exists in the analysis server, and
+the extension it writes is ordinary code that compiles without it.
+
 ## Limits
 
 - **Never a false positive.** When a model's `toJson` is built at run time
