@@ -23,7 +23,7 @@ export 'package:result_controller/result_controller.dart'
         ResultExtensions;
 
 export 'src/database/database.dart'
-    show Database, QueryExecutor, ReadTransaction, Transaction;
+    show Database, DbSync, QueryExecutor, ReadTransaction, Transaction;
 export 'src/engine/db_options.dart';
 export 'src/engine/engine.dart';
 export 'src/errors/db_error.dart';
@@ -34,6 +34,7 @@ export 'src/protocol/json_values.dart';
 export 'src/protocol/query_plan.dart';
 export 'src/protocol/request.dart';
 export 'src/protocol/statement.dart';
+export 'src/protocol/sync_records.dart';
 export 'src/query/expression.dart';
 export 'src/query/ordering.dart';
 export 'src/query/queries.dart';

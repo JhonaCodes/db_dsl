@@ -17,8 +17,10 @@ final class ProtocolExample {
   final Map<String, Object?> request;
 
   /// The `ok` payload of the answer. The string [ProtocolExamples.any]
-  /// matches any value, and [ProtocolExamples.transaction] captures the
-  /// transaction id that later requests reuse.
+  /// matches any value, and a placeholder ([ProtocolExamples.transaction],
+  /// [ProtocolExamples.lease], [ProtocolExamples.mutation],
+  /// [ProtocolExamples.conflict]) captures the value at its place, which
+  /// later requests reuse.
   final Map<String, Object?>? ok;
 
   /// The `code` of an error answer (its message is free text).
@@ -51,6 +53,23 @@ abstract final class ProtocolExamples {
 
   /// Stands for the id answered by `begin`, captured and reused.
   static const String transaction = r'$transaction';
+
+  /// Stands for the lease answered by `sync_claim`.
+  static const String lease = r'$lease';
+
+  /// Stands for the mutation id of an envelope.
+  static const String mutation = r'$mutation';
+
+  /// Stands for the id of a conflict.
+  static const String conflict = r'$conflict';
+
+  /// Every placeholder: captured from answers, substituted in requests.
+  static const Set<String> placeholders = {
+    transaction,
+    lease,
+    mutation,
+    conflict,
+  };
 
   /// Every example, in order.
   static const List<ProtocolExample> scenario = [
@@ -569,6 +588,289 @@ abstract final class ProtocolExamples {
       'Dropping it again answers false',
       {'v': 1, 'op': 'drop_table', 'name': 'posts'},
       ok: {'dropped': false},
+    ),
+    ProtocolExample(
+      'Define a synchronized table: every write records a change',
+      {
+        'v': 1,
+        'op': 'define_table',
+        'table': {
+          'name': 'notes',
+          'primary_key': 'id',
+          'auto_increment': false,
+          'indexes': <Object?>[],
+          'sync': 'primary',
+        },
+      },
+      ok: {'changed': true},
+    ),
+    ProtocolExample(
+      'Write to it as to any table',
+      {
+        'v': 1,
+        'op': 'execute',
+        'statement': {
+          'op': 'insert',
+          'table': 'notes',
+          'rows': [
+            {'id': 'n1', 'title': 'Draft'},
+          ],
+        },
+      },
+      ok: {
+        'affected': 1,
+        'rows': [
+          {'id': 'n1', 'title': 'Draft'},
+        ],
+      },
+    ),
+    ProtocolExample(
+      'The change is pending, committed with the row',
+      {'v': 1, 'op': 'sync_status', 'remote': 'primary'},
+      ok: {'checkpoint': null, 'pending': 1, 'conflicts': 0},
+    ),
+    ProtocolExample(
+      'Claim a batch to push: a lease and immutable envelopes',
+      {
+        'v': 1,
+        'op': 'sync_claim',
+        'remote': 'primary',
+        'max_changes': 10,
+        'max_bytes': null,
+        'lease_ms': 30000,
+      },
+      ok: {
+        'lease_id': lease,
+        'envelopes': [
+          {
+            'mutation_id': mutation,
+            'table': 'notes',
+            'key': 'n1',
+            'generation': 1,
+            'local_revision': 1,
+            'local_transaction_id': any,
+            'operation': 'upsert',
+            'row': {'id': 'n1', 'title': 'Draft'},
+            'base_version': null,
+            'predecessor': null,
+            'attempt': 1,
+          },
+        ],
+      },
+    ),
+    ProtocolExample(
+      'List the open changes',
+      {
+        'v': 1,
+        'op': 'sync_pending',
+        'remote': 'primary',
+        'table': null,
+        'limit': null,
+      },
+      ok: {
+        'count': 1,
+        'changes': [
+          {
+            'mutation_id': mutation,
+            'table': 'notes',
+            'key': 'n1',
+            'local_revision': 1,
+            'operation': 'upsert',
+            'state': 'leased',
+            'attempts': 1,
+            'last_error': null,
+          },
+        ],
+      },
+    ),
+    ProtocolExample(
+      'Record what the server stored: one mutation and revision',
+      {
+        'v': 1,
+        'op': 'sync_push_result',
+        'remote': 'primary',
+        'lease_id': lease,
+        'acknowledged': [
+          {
+            'mutation_id': mutation,
+            'table': 'notes',
+            'key': 'n1',
+            'local_revision': 1,
+            'server_version': 'v1',
+          },
+        ],
+        'rejected': <Object?>[],
+      },
+      ok: {
+        'acknowledged': 1,
+        'rejected': 0,
+        'released': 0,
+        'ignored': <Object?>[],
+      },
+    ),
+    ProtocolExample(
+      'A duplicate acknowledgement changes nothing',
+      {
+        'v': 1,
+        'op': 'sync_push_result',
+        'remote': 'primary',
+        'lease_id': null,
+        'acknowledged': [
+          {
+            'mutation_id': mutation,
+            'table': 'notes',
+            'key': 'n1',
+            'local_revision': 1,
+            'server_version': 'v1',
+          },
+        ],
+        'rejected': <Object?>[],
+      },
+      ok: {
+        'acknowledged': 0,
+        'rejected': 0,
+        'released': 0,
+        'ignored': <Object?>[],
+      },
+    ),
+    ProtocolExample(
+      'The row is synchronized',
+      {'v': 1, 'op': 'sync_state', 'table': 'notes', 'key': 'n1'},
+      ok: {
+        'state': {
+          'state': 'synced',
+          'deleted': false,
+          'sending': false,
+          'attempts': 0,
+          'last_error': null,
+          'pending': 0,
+          'local_revision': 1,
+          'acknowledged_local_revision': 1,
+          'settled_local_revision': 1,
+          'row_version': 1,
+          'server_version': 'v1',
+          'conflict': null,
+        },
+      },
+    ),
+    ProtocolExample(
+      'Edit it locally',
+      {
+        'v': 1,
+        'op': 'execute',
+        'statement': {
+          'op': 'update',
+          'table': 'notes',
+          'filter': {'op': 'eq', 'field': 'id', 'value': 'n1'},
+          'set': {'title': 'Edited'},
+        },
+      },
+      ok: {'affected': 1, 'rows': <Object?>[]},
+    ),
+    ProtocolExample(
+      'A server change over the pending edit becomes a conflict',
+      {
+        'v': 1,
+        'op': 'sync_apply_remote',
+        'remote': 'primary',
+        'expected_checkpoint': null,
+        'next_checkpoint': 'c1',
+        'changes': [
+          {
+            'table': 'notes',
+            'key': 'n1',
+            'operation': 'upsert',
+            'row': {'id': 'n1', 'title': 'Remote'},
+            'server_version': 'v2',
+            'mutation_id': null,
+          },
+        ],
+      },
+      ok: {'applied': 0, 'conflicts': 1, 'acknowledged': 0, 'skipped': 0},
+    ),
+    ProtocolExample(
+      'The conflict keeps both variants',
+      {'v': 1, 'op': 'sync_conflicts', 'remote': 'primary'},
+      ok: {
+        'conflicts': [
+          {
+            'id': conflict,
+            'table': 'notes',
+            'key': 'n1',
+            'local_row_version': 2,
+            'local_row': {'id': 'n1', 'title': 'Edited'},
+            'outstanding': [any],
+            'remote_version': 'v2',
+            'remote_operation': 'upsert',
+            'remote_row': {'id': 'n1', 'title': 'Remote'},
+            'base_version': 'v1',
+          },
+        ],
+      },
+    ),
+    ProtocolExample('A resolution on an old row version is refused', {
+      'v': 1,
+      'op': 'sync_resolve',
+      'conflict': conflict,
+      'expected_row_version': 1,
+      'resolution': {'kind': 'accept_remote'},
+    }, errorCode: 'RowVersionMismatch'),
+    ProtocolExample('Accept the server variant', {
+      'v': 1,
+      'op': 'sync_resolve',
+      'conflict': conflict,
+      'expected_row_version': 2,
+      'resolution': {'kind': 'accept_remote'},
+    }, ok: <String, Object?>{}),
+    ProtocolExample('A page read after an old checkpoint is refused', {
+      'v': 1,
+      'op': 'sync_apply_remote',
+      'remote': 'primary',
+      'expected_checkpoint': null,
+      'next_checkpoint': 'c2',
+      'changes': <Object?>[],
+    }, errorCode: 'StaleCheckpoint'),
+    ProtocolExample(
+      'Releasing a lease that holds nothing releases nothing',
+      {
+        'v': 1,
+        'op': 'sync_release',
+        'remote': 'primary',
+        'lease_id': lease,
+        'reason': 'timeout',
+      },
+      ok: {'released': 0},
+    ),
+    ProtocolExample(
+      'Retrying a settled mutation retries nothing',
+      {
+        'v': 1,
+        'op': 'sync_retry',
+        'remote': 'primary',
+        'mutation_ids': [mutation],
+      },
+      ok: {'retried': 0},
+    ),
+    ProtocolExample('An acknowledgement of an unknown mutation is refused', {
+      'v': 1,
+      'op': 'sync_push_result',
+      'remote': 'primary',
+      'lease_id': null,
+      'acknowledged': [
+        {
+          'mutation_id': 'nobody-1',
+          'table': 'notes',
+          'key': 'n1',
+          'local_revision': 1,
+          'server_version': 'v9',
+        },
+      ],
+      'rejected': <Object?>[],
+    }, errorCode: 'UnknownMutation'),
+    ProtocolExample(
+      'Everything is settled, at the checkpoint of the last page',
+      {'v': 1, 'op': 'sync_status', 'remote': 'primary'},
+      ok: {'checkpoint': 'c1', 'pending': 0, 'conflicts': 0},
     ),
     ProtocolExample('Another protocol version is refused', {
       'v': 2,

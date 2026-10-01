@@ -31,6 +31,9 @@ final class MemoryStore {
   final Map<int, Duration> _expired = {};
   int _lastId = 0;
 
+  /// Root write transactions so far: each numbers the changes it records.
+  int _roots = 0;
+
   /// Runs [write] on a copy of the committed state under the writer, and
   /// commits the copy when it answers `Ok`.
   Future<Result<O, DbError>> autocommit<O>(
@@ -40,7 +43,7 @@ final class MemoryStore {
 
     try {
       final copy = committed.copy();
-      final result = write(MemoryExecutor(copy));
+      final result = write(MemoryExecutor(copy, transaction: ++_roots));
 
       if (result.isOk) {
         committed = copy;
@@ -125,6 +128,7 @@ final class MemorySession {
     this._releaseWriter,
     this.idleTimeout,
   ) : mode = TransactionMode.write,
+      _root = ++_store._roots,
       _levels = [_Level(_store.committed.copy())] {
     _touch();
   }
@@ -132,6 +136,7 @@ final class MemorySession {
   MemorySession._read(this._store, this.id, this.idleTimeout)
     : mode = TransactionMode.read,
       _releaseWriter = null,
+      _root = 0,
       _levels = [_Level(_store.committed)] {
     _touch();
   }
@@ -148,6 +153,7 @@ final class MemorySession {
   final Duration idleTimeout;
 
   final void Function()? _releaseWriter;
+  final int _root;
   final List<_Level> _levels;
   Timer? _idle;
   bool _finished = false;
@@ -194,7 +200,7 @@ final class MemorySession {
 
   Result<Object?, DbError> _write(_Level level, Statement<Object?> statement) {
     final copy = level.state.copy();
-    final result = MemoryExecutor(copy).execute(statement);
+    final result = MemoryExecutor(copy, transaction: _root).execute(statement);
 
     if (result.isOk) {
       level.state = copy;

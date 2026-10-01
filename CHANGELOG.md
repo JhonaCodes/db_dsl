@@ -1,3 +1,33 @@
+## 0.2.4
+
+### Added
+- Offline-first sync (PROTOCOL.md, "Sync"): `DbTable(..., syncWith:
+  'primary')` makes every write record a change in the same transaction
+  as the row, and `db.sync` claims leased batches (`claim`), records the
+  server's answers by mutation and revision (`applyPushResult`), releases
+  and retries deliveries (`release`, `retry`), applies remote pages with
+  their checkpoint atomically (`applyRemote`), keeps and resolves
+  conflicts (`conflicts`, `resolveConflict`), and reports `stateOf`,
+  `pending` and `status`.
+- Ten protocol operations (`sync_claim`, `sync_push_result`,
+  `sync_release`, `sync_retry`, `sync_apply_remote`, `sync_resolve`,
+  `sync_state`, `sync_pending`, `sync_conflicts`, `sync_status`), the
+  `sync` field of a table definition, and eight error codes, each in an
+  existing `DbError` family: `syncNotTracked` (schema), `unknownMutation`,
+  `acknowledgementMismatch`, `conflictNotFound`, `tombstonePending`
+  (constraint), `staleCheckpoint`, `rowVersionMismatch`, `mutationInFlight`
+  (transaction).
+- `MemoryEngine` implements sync with the rules of offline_first_core
+  0.7.5; six conformance cases and an example scenario of every sync
+  operation in PROTOCOL.md run on every engine.
+
+### Changed
+- The sealed `ProtocolRequest` family and `DbErrorCode` grew (see
+  "Status" in the README): an engine written in Dart that switches over
+  requests must add the sync cases.
+- The protocol replay captures `$lease`, `$mutation` and `$conflict`
+  besides `$transaction`.
+
 ## 0.2.3
 
 ### Added

@@ -3,28 +3,41 @@
 /// `engine/store.rs`).
 library;
 
+import 'dart:convert';
+import 'dart:math';
+
 import 'package:result_controller/result_controller.dart';
 
 import '../errors/db_error.dart';
 import '../protocol/json_values.dart';
 import '../protocol/query_plan.dart';
 import '../protocol/statement.dart';
+import '../protocol/sync_records.dart';
 import '../query/expression.dart';
 import '../schema/table_schema.dart';
 import 'expression_evaluator.dart';
 import 'memory_relational.dart';
 import 'memory_state.dart';
 
+part 'memory_sync.dart';
+
 /// Runs statements and definitions on one [MemoryState].
 ///
 /// Writes change [state] in place; callers give it a copy and keep the copy
 /// only when the result is `Ok`, which makes every statement atomic.
 final class MemoryExecutor {
-  /// An executor over [state].
-  MemoryExecutor(this.state);
+  /// An executor over [state], inside the root transaction numbered
+  /// [transaction] (the changes it records carry it).
+  MemoryExecutor(this.state, {this.transaction = 0});
 
   /// The state read and written.
   final MemoryState state;
+
+  /// The number of the root transaction this executor writes in.
+  final int transaction;
+
+  /// The sync operations on [state].
+  late final MemorySyncOperations sync = MemorySyncOperations(this);
 
   /// Runs [statement]; answers its output.
   Result<Object?, DbError> execute(Statement<Object?> statement) =>
@@ -68,6 +81,14 @@ final class MemoryExecutor {
             'change',
           ),
         );
+      case MemoryTable(schema: TableSchema(sync: final String remote))
+          when remote != schema.sync:
+        return Err(
+          DbError(
+            DbErrorCode.schemaMismatch,
+            '`${schema.name}`: a synchronized table keeps its remote',
+          ),
+        );
       default:
         break;
     }
@@ -94,12 +115,23 @@ final class MemoryExecutor {
     }
 
     state.tables[schema.name] = table;
+
+    if (schema.sync != null) {
+      state.sync.enabled = true;
+    }
+
     return Ok(true);
   }
 
-  /// Drops the table [name]; answers whether it existed.
+  /// Drops the table [name] (with its sync records); answers whether it
+  /// existed.
   bool dropTable(String name) {
     state.sequences.remove(name);
+
+    if (state.tables[name]?.schema.sync != null) {
+      sync.purgeTable(name);
+    }
+
     return state.tables.remove(name) != null;
   }
 
@@ -234,7 +266,9 @@ final class MemoryExecutor {
         return Err(error);
       }
 
-      if (table.rows[pk] case final Map<String, Object?> previous) {
+      final previous = table.rows[pk];
+
+      if (previous != null) {
         switch (insert.onConflict) {
           case OnConflict.error:
             return Err(
@@ -258,6 +292,11 @@ final class MemoryExecutor {
       }
 
       table.rows[pk] = row;
+
+      if (sync.track(table, previous, row) case final DbError error) {
+        return Err(error);
+      }
+
       written.add(row);
     }
 
@@ -336,6 +375,10 @@ final class MemoryExecutor {
       }
 
       table.rows[key] = updated;
+
+      if (sync.track(table, old, updated) case final DbError error) {
+        return Err(error);
+      }
     }
 
     return Ok(WriteOutput(rows.length));
@@ -351,6 +394,10 @@ final class MemoryExecutor {
     for (final (key, old) in rows) {
       _removeIndexEntries(table, old, key);
       table.rows.remove(key);
+
+      if (sync.track(table, old, null) case final DbError error) {
+        return Err(error);
+      }
     }
 
     return Ok(WriteOutput(rows.length));
@@ -482,6 +529,12 @@ final class MemoryExecutor {
 
     if (schema.primaryKey.isEmpty) {
       return invalid('Table `${schema.name}` has an empty primary key');
+    }
+
+    if (schema.sync == '') {
+      return invalid(
+        'Table `${schema.name}` synchronizes with an empty remote',
+      );
     }
 
     final names = <String>{};

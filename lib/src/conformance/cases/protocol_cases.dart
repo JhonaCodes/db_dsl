@@ -11,10 +11,10 @@ abstract final class _ProtocolCases {
           await host.engine.open(await host.freshPath(), host.options),
           'open',
         );
-        Object? transaction;
+        final captured = <String, Object?>{};
 
         for (final example in ProtocolExamples.scenario) {
-          final wire = _substitute(example.request, transaction);
+          final wire = _substitute(example.request, captured);
           final answer = await ProtocolRequest.decode(wire).when(
             ok: connection.send,
             err: (error) async => Err<Map<String, Object?>, DbError>(error),
@@ -23,11 +23,8 @@ abstract final class _ProtocolCases {
           switch ((example.ok, example.errorCode)) {
             case (final Map<String, Object?> expected, _):
               final payload = Check.ok(answer, example.title);
-              if (expected['transaction'] == ProtocolExamples.transaction) {
-                transaction = payload['transaction'];
-              }
               Check.isTrue(
-                _matches(payload, expected),
+                _matches(payload, expected, captured),
                 '${example.title}: expected $expected, got $payload',
               );
             case (_, final String code):
@@ -42,36 +39,62 @@ abstract final class _ProtocolCases {
     ),
   ];
 
-  /// [json] with the captured transaction id in place of its placeholder.
-  static Object? _substitute(Object? json, Object? transaction) =>
+  /// [json] with the captured values in place of their placeholders.
+  static Object? _substitute(Object? json, Map<String, Object?> captured) =>
       switch (json) {
-        ProtocolExamples.transaction => transaction,
+        final String placeholder
+            when ProtocolExamples.placeholders.contains(placeholder) =>
+          captured[placeholder],
         final Map<String, Object?> map => {
           for (final MapEntry(:key, :value) in map.entries)
-            key: _substitute(value, transaction),
+            key: _substitute(value, captured),
         },
         final List<Object?> list => [
-          for (final item in list) _substitute(item, transaction),
+          for (final item in list) _substitute(item, captured),
         ],
         _ => json,
       };
 
-  /// Structural equality where [ProtocolExamples.any] and
-  /// [ProtocolExamples.transaction] match any value.
-  static bool _matches(Object? actual, Object? expected) => switch ((
-    actual,
-    expected,
-  )) {
-    (_, ProtocolExamples.any || ProtocolExamples.transaction) => true,
+  /// Structural equality where [ProtocolExamples.any] matches any value,
+  /// and a placeholder matches the value it captured, or captures it.
+  static bool _matches(
+    Object? actual,
+    Object? expected,
+    Map<String, Object?> captured,
+  ) => switch ((actual, expected)) {
+    (_, ProtocolExamples.any) => true,
+    (_, final String placeholder)
+        when ProtocolExamples.placeholders.contains(placeholder) =>
+      _capture(captured, placeholder, actual),
     (final Map<String, Object?> a, final Map<String, Object?> e) =>
       a.length == e.length &&
           e.entries.every(
             (entry) =>
-                a.containsKey(entry.key) && _matches(a[entry.key], entry.value),
+                a.containsKey(entry.key) &&
+                _matches(a[entry.key], entry.value, captured),
           ),
     (final List<Object?> a, final List<Object?> e) =>
       a.length == e.length &&
-          Iterable<int>.generate(a.length).every((i) => _matches(a[i], e[i])),
+          Iterable<int>.generate(
+            a.length,
+          ).every((i) => _matches(a[i], e[i], captured)),
     _ => actual == expected,
   };
+
+  /// Captures [value] for [placeholder]. A `begin` answers a new
+  /// transaction every time, so it always captures; other placeholders
+  /// must keep the value they captured first.
+  static bool _capture(
+    Map<String, Object?> captured,
+    String placeholder,
+    Object? value,
+  ) {
+    if (placeholder == ProtocolExamples.transaction ||
+        !captured.containsKey(placeholder)) {
+      captured[placeholder] = value;
+      return true;
+    }
+
+    return captured[placeholder] == value;
+  }
 }

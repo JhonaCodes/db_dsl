@@ -280,6 +280,64 @@ of the bridge, then primary key lookups. Links are ordinary rows, so they
 commit or roll back with the transaction they are awaited in. A row
 without its key (not stored yet) answers `missingPrimaryKey`.
 
+## Offline-first sync
+
+A table declared with `syncWith` records every write as a change **in the
+same transaction** as the row, so the row and its pending change commit or
+roll back together (a crash cannot keep one and lose the other). Your code
+moves the changes; the database knows what is pending, what is being sent
+and what the server confirmed:
+
+```dart
+static final table = DbTable<Note>('notes', key: 'id', fromJson: Note.fromJson, syncWith: 'primary');
+
+// Writing is what it always was.
+await Note.table.insert([draft]);
+
+// Push: lease a batch, send it, record exactly what the server stored.
+if (await db.sync.claim('primary') case Ok(data: final batch) when !batch.isEmpty) {
+  final versions = await api.push(batch.envelopes);   // your HTTP: a version per envelope
+  await db.sync.applyPushResult('primary', PushResult(
+    leaseId: batch.leaseId,
+    acknowledged: [
+      for (final (i, envelope) in batch.envelopes.indexed)
+        SyncAcknowledgement.of(envelope, versions[i]),
+    ],
+  ));
+}
+
+// Pull: a page and its checkpoint are stored together, or not at all.
+if (await db.sync.status('primary') case Ok(data: final status)) {
+  final page = await api.pull(after: status.checkpoint);   // a RemotePage
+  await db.sync.applyRemote('primary', page);
+}
+
+// A server change over a pending local change is a conflict.
+if (await db.sync.conflicts('primary') case Ok(data: final conflicts)) {
+  for (final conflict in conflicts) {
+    await db.sync.resolveConflict(conflict, const ConflictResolution.acceptRemote());
+  }
+}
+```
+
+- An acknowledgement settles one mutation and revision: the ACK of revision
+  7 never confirms revision 8 written meanwhile.
+- One change per row is in flight, in revision order, and every retry sends
+  the same envelope (`mutationId`, bytes, `baseVersion`): deduplicate by
+  `mutationId` on the server.
+- Remote changes never come back as local changes; over a pending change
+  they are kept as a conflict, which `resolveConflict` closes only if the
+  row did not change since (`rowVersionMismatch`) and nothing is being sent
+  (`mutationInFlight`).
+- A deletion keeps a tombstone until acknowledged; recreating the key
+  meanwhile answers `tombstonePending`.
+- `db.sync.stateOf(table, key)` answers `pending`, `synced`, `conflict`,
+  `blocked`, `unknown` (rows written before the table was synchronized) or
+  `localOnly`, with the revisions.
+
+`MemoryEngine` follows the same rules as the native engine, and the
+conformance suite checks both.
+
 ## Writes
 
 ```dart
@@ -492,8 +550,15 @@ replays them, and a test keeps the document equal to them.
 ## Status
 
 db_dsl stays in **0.2.x**: releases add and fix, and never break code
-written against 0.2. The protocol is version 1 and only grows (see
-"Compatibility" in PROTOCOL.md).
+written against 0.2 that uses the DSL. The protocol is version 1 and only
+grows (see "Compatibility" in PROTOCOL.md).
+
+One exception, on purpose: a new operation of the protocol needs a new
+member of the sealed `ProtocolRequest` family (and new `DbErrorCode`
+values), so those can grow in a minor release, as the sync operations did
+in 0.2.4. Code that switches exhaustively over them, such as an engine
+written in Dart, adds the new cases; apps that build queries and read
+`DbError` families are not affected.
 
 ## License
 

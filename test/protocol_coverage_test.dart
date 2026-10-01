@@ -40,6 +40,16 @@ abstract final class _Kinds {
     'tx_execute',
     for (final control in TransactionControl.values) control.wire,
     'info',
+    'sync_claim',
+    'sync_push_result',
+    'sync_release',
+    'sync_retry',
+    'sync_apply_remote',
+    'sync_resolve',
+    'sync_state',
+    'sync_pending',
+    'sync_conflicts',
+    'sync_status',
   ];
 
   /// Every `op` of a statement.
@@ -70,6 +80,16 @@ abstract final class _Kinds {
         TransactionExecuteRequest() => 'tx_execute',
         TransactionControlRequest(:final control) => control.wire,
         InfoRequest() => 'info',
+        SyncClaimRequest() => 'sync_claim',
+        SyncPushResultRequest() => 'sync_push_result',
+        SyncReleaseRequest() => 'sync_release',
+        SyncRetryRequest() => 'sync_retry',
+        SyncApplyRemoteRequest() => 'sync_apply_remote',
+        SyncResolveRequest() => 'sync_resolve',
+        SyncStateRequest() => 'sync_state',
+        SyncPendingRequest() => 'sync_pending',
+        SyncConflictsRequest() => 'sync_conflicts',
+        SyncStatusRequest() => 'sync_status',
       };
 
   /// Compile-time guard: adding a statement kind breaks this switch until

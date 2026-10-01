@@ -39,7 +39,9 @@ final class DbTable<T> {
   ///
   /// With [autoIncrement], a row inserted without its key gets the next
   /// integer (the key must then be a top-level integer field). [indexes]
-  /// are maintained in the same transaction as the rows.
+  /// are maintained in the same transaction as the rows. With [syncWith],
+  /// every write records a change for that remote in the same transaction
+  /// (see `Database.sync`); a synchronized table stays synchronized.
   DbTable(
     this.tableName, {
     required String key,
@@ -47,6 +49,7 @@ final class DbTable<T> {
     Map<String, Object?> Function(T row)? toJson,
     this.autoIncrement = false,
     this.indexes = const [],
+    this.syncWith,
   }) : primaryKey = Field<Object>(key, table: tableName),
        _fromJson = fromJson,
        _toJson = toJson;
@@ -62,6 +65,9 @@ final class DbTable<T> {
 
   /// Secondary indexes, maintained in the same transaction as the rows.
   final List<Index> indexes;
+
+  /// The remote this table synchronizes with, or `null` for a local table.
+  final String? syncWith;
 
   final T Function(Map<String, Object?> json) _fromJson;
   final Map<String, Object?> Function(T row)? _toJson;
@@ -125,6 +131,7 @@ final class DbTable<T> {
     primaryKey: primaryKey.name,
     autoIncrement: autoIncrement,
     indexes: [for (final index in indexes) index.schema],
+    sync: syncWith,
   );
 
   /// Every row (`SELECT * FROM table`).

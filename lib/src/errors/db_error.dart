@@ -93,6 +93,33 @@ enum DbErrorCode {
   /// so it is refused instead of waiting forever.
   tableNotReady('TableNotReady'),
 
+  /// The table (or the remote) of a sync operation is not synchronized.
+  syncNotTracked('SyncNotTracked'),
+
+  /// A sync operation names a mutation this database does not know.
+  unknownMutation('UnknownMutation'),
+
+  /// An acknowledgement names a mutation, but not its row, revision or
+  /// remote, or the mutation was never claimed.
+  acknowledgementMismatch('AcknowledgementMismatch'),
+
+  /// A page of remote changes was read after another checkpoint than the
+  /// current one: read the status and pull again.
+  staleCheckpoint('StaleCheckpoint'),
+
+  /// The conflict does not exist, or was resolved.
+  conflictNotFound('ConflictNotFound'),
+
+  /// The row changed since the conflict was read: read the conflicts again.
+  rowVersionMismatch('RowVersionMismatch'),
+
+  /// A change of the row is being sent: acknowledge or release it first.
+  mutationInFlight('MutationInFlight'),
+
+  /// The key was deleted and the deletion is not acknowledged yet, so it
+  /// cannot be created again meanwhile.
+  tombstonePending('TombstonePending'),
+
   /// The engine speaks another protocol version.
   unsupportedProtocol('UnsupportedProtocol'),
 
@@ -153,18 +180,19 @@ sealed class DbError {
       DbErrorCode.duplicateKey ||
       DbErrorCode.uniqueViolation ||
       DbErrorCode.missingPrimaryKey ||
-      DbErrorCode.affectedRowsMismatch => ConstraintError._(
-        code,
-        message,
-        wire,
-      ),
+      DbErrorCode.affectedRowsMismatch ||
+      DbErrorCode.unknownMutation ||
+      DbErrorCode.acknowledgementMismatch ||
+      DbErrorCode.conflictNotFound ||
+      DbErrorCode.tombstonePending => ConstraintError._(code, message, wire),
       DbErrorCode.tableNotFound ||
       DbErrorCode.invalidSchema ||
       DbErrorCode.schemaMismatch ||
       DbErrorCode.invalidRequest ||
       DbErrorCode.keyTooLarge ||
       DbErrorCode.rowMapping ||
-      DbErrorCode.tableNotReady => SchemaError._(code, message, wire),
+      DbErrorCode.tableNotReady ||
+      DbErrorCode.syncNotTracked => SchemaError._(code, message, wire),
       DbErrorCode.transactionClosed ||
       DbErrorCode.transactionAborted ||
       DbErrorCode.transactionExpired ||
@@ -172,7 +200,10 @@ sealed class DbError {
       DbErrorCode.noSavepoint ||
       DbErrorCode.savepointOpen ||
       DbErrorCode.transactionReentrancy ||
-      DbErrorCode.unknownTransaction => TransactionError._(code, message, wire),
+      DbErrorCode.unknownTransaction ||
+      DbErrorCode.staleCheckpoint ||
+      DbErrorCode.rowVersionMismatch ||
+      DbErrorCode.mutationInFlight => TransactionError._(code, message, wire),
       DbErrorCode.corruptRecord ||
       DbErrorCode.mapFull ||
       DbErrorCode.legacyFormat ||
@@ -220,8 +251,10 @@ sealed class DbError {
 }
 
 /// A write broke a rule of the data: a duplicate primary key, a unique index,
-/// a missing key, or an `expectAffectedRows` that did not hold. Nothing was
-/// written by the failed statement.
+/// a missing key, an `expectAffectedRows` that did not hold, a key whose
+/// deletion is not synchronized yet, or a sync operation naming a mutation
+/// or conflict that does not match. Nothing was written by the failed
+/// statement.
 final class ConstraintError extends DbError {
   const ConstraintError._(super.code, super.message, super.wireCode)
     : super._();
@@ -235,7 +268,9 @@ final class SchemaError extends DbError {
 }
 
 /// The transaction cannot go on: it is closed, expired, rollback-only or used
-/// the wrong way. Running the unit of work again is usually the fix.
+/// the wrong way, or a sync operation raced with another one (a stale
+/// checkpoint, a row changed since its conflict was read, a change still
+/// being sent). Running the unit of work again is usually the fix.
 final class TransactionError extends DbError {
   const TransactionError._(super.code, super.message, super.wireCode)
     : super._();

@@ -16,6 +16,7 @@ import '../protocol/engine_info.dart';
 import '../protocol/query_plan.dart';
 import '../protocol/request.dart';
 import '../protocol/statement.dart';
+import '../protocol/sync_records.dart';
 import '../query/queries.dart';
 import '../schema/table.dart';
 import '../schema/table_schema.dart';
@@ -23,6 +24,7 @@ import '../schema/table_schema.dart';
 part 'transaction.dart';
 part 'write_lock.dart';
 part 'query_watcher.dart';
+part 'sync.dart';
 
 /// Something statements run on: a [Database] (each statement in its own
 /// transaction), a [Transaction] or a [ReadTransaction].
@@ -378,6 +380,9 @@ base class Database extends QueryExecutor {
 
   /// Tables written by each commit of this database, for custom reactivity.
   Stream<Set<String>> get changes => _changes.stream;
+
+  /// The offline-first sync of the tables declared with `syncWith`.
+  DbSync get sync => DbSync._(this);
 
   /// Facts about the database and its engine.
   Future<Result<EngineInfo, DbError>> info() =>

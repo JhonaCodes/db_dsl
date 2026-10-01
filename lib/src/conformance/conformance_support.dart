@@ -53,13 +53,15 @@ final class JsonRow {
 extension type JsonTable._(DbTable<JsonRow> _table)
     implements DbTable<JsonRow> {
   /// A table [name] keyed by [key], with [indexes] over the named fields and
-  /// [uniqueIndexes] (each index is named after its fields).
+  /// [uniqueIndexes] (each index is named after its fields), synchronized
+  /// with the remote [syncWith] when given.
   JsonTable(
     String name, {
     String key = 'id',
     bool autoIncrementKey = false,
     List<List<String>> indexes = const [],
     List<List<String>> uniqueIndexes = const [],
+    String? syncWith,
   }) : _table = DbTable<JsonRow>(
          name,
          key: key,
@@ -70,6 +72,7 @@ extension type JsonTable._(DbTable<JsonRow> _table)
            for (final fields in indexes) Index(fields),
            for (final fields in uniqueIndexes) Index.unique(fields),
          ],
+         syncWith: syncWith,
        );
 
   /// Rows from plain maps.

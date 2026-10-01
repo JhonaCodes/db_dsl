@@ -121,6 +121,45 @@ final class MemoryConnection implements EngineConnection {
       _store
           .session(transaction)
           .flatMap((session) => session.control(control)),
+    SyncClaimRequest(:final remote, :final limits) => _store.autocommit(
+      (executor) => executor.sync.claim(remote, limits),
+    ),
+    SyncPushResultRequest(:final remote, :final result) => _store.autocommit(
+      (executor) => executor.sync.applyPushResult(remote, result),
+    ),
+    SyncReleaseRequest(:final remote, :final leaseId, :final reason) =>
+      _store.autocommit(
+        (executor) => executor.sync.release(remote, leaseId, reason),
+      ),
+    SyncRetryRequest(:final remote, :final mutationIds) => _store.autocommit(
+      (executor) => executor.sync.retry(remote, mutationIds),
+    ),
+    SyncApplyRemoteRequest(:final remote, :final page) => _store.autocommit(
+      (executor) => executor.sync.applyRemote(remote, page),
+    ),
+    SyncResolveRequest(
+      :final conflict,
+      :final expectedRowVersion,
+      :final resolution,
+    ) =>
+      _store.autocommit(
+        (executor) => executor.sync.resolveConflict(
+          conflict,
+          expectedRowVersion,
+          resolution,
+        ),
+      ),
+    SyncStateRequest(:final table, :final key) => MemoryExecutor(
+      _store.committed,
+    ).sync.stateOf(table, key),
+    SyncPendingRequest(:final remote, :final table, :final limit) =>
+      MemoryExecutor(_store.committed).sync.pending(remote, table, limit),
+    SyncConflictsRequest(:final remote) => MemoryExecutor(
+      _store.committed,
+    ).sync.conflicts(remote),
+    SyncStatusRequest(:final remote) => MemoryExecutor(
+      _store.committed,
+    ).sync.status(remote),
     InfoRequest() => Ok(
       EngineInfo(
         protocol: ProtocolRequest.version,

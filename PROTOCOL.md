@@ -25,11 +25,12 @@ below, and the examples at the end, against any engine. See
 6. [Statements](#statements)
 7. [Operations](#operations)
 8. [Transactions](#transactions)
-9. [Errors](#errors)
-10. [Open options](#open-options)
-11. [Compatibility](#compatibility)
-12. [Checking an engine](#checking-an-engine)
-13. [Examples](#examples)
+9. [Sync](#sync)
+10. [Errors](#errors)
+11. [Open options](#open-options)
+12. [Compatibility](#compatibility)
+13. [Checking an engine](#checking-an-engine)
+14. [Examples](#examples)
 
 ## Transport
 
@@ -181,11 +182,16 @@ A table is defined with:
   table; `fields` is a non-empty list of paths. A `unique` index rejects two
   rows with equal values in its fields (`UniqueViolation`); rows with a
   `null` or missing value among them are exempt, as in SQL.
+- `sync` (absent by default): the remote the table synchronizes with, a
+  logical name such as `"primary"` (see [Sync](#sync)). A non-empty string;
+  an empty one is `InvalidSchema`.
 
 Defining an existing table again with the same primary key and
 `auto_increment` adds the new indexes (built over the rows already stored)
 and removes the ones no longer listed. Changing the primary key or
-`auto_increment` fails with `SchemaMismatch`.
+`auto_increment` fails with `SchemaMismatch`, and so does changing or
+removing the `sync` of a synchronized table (adding it to a local table is
+allowed: its existing rows are `unknown`).
 
 ## Expressions
 
@@ -478,6 +484,16 @@ in `update`. The answer is `{"affected": n, "rows": []}`.
 | `tx_execute` | `transaction`, `statement` | the answer of the statement |
 | `savepoint`, `release`, `rollback_to`, `commit`, `rollback` | `transaction` | `{}` |
 | `info` | — | `{"protocol": 1, "tables": n, "lmdb": "1.0.2", "map_size": n}` |
+| `sync_claim` | `remote`, `max_changes`, `max_bytes`, `lease_ms` | `{"lease_id": n\|null, "envelopes": [envelope, ...]}` |
+| `sync_push_result` | `remote`, `lease_id`, `acknowledged`, `rejected` | `{"acknowledged": n, "rejected": n, "released": n, "ignored": [id, ...]}` |
+| `sync_release` | `remote`, `lease_id`, `reason` | `{"released": n}` |
+| `sync_retry` | `remote`, `mutation_ids` | `{"retried": n}` |
+| `sync_apply_remote` | `remote`, `expected_checkpoint`, `next_checkpoint`, `changes` | `{"applied": n, "conflicts": n, "acknowledged": n, "skipped": n}` |
+| `sync_resolve` | `conflict`, `expected_row_version`, `resolution` | `{}` |
+| `sync_state` | `table`, `key` | `{"state": state\|null}` |
+| `sync_pending` | `remote`, `table`, `limit` | `{"count": n, "changes": [change, ...]}` |
+| `sync_conflicts` | `remote` | `{"conflicts": [conflict, ...]}` |
+| `sync_status` | `remote` | `{"checkpoint": value, "pending": n, "conflicts": n}` |
 
 - `define_table` answers whether anything changed; defining an identical
   table again answers `false`.
@@ -570,6 +586,97 @@ In a rollback-only level:
 That is how a caller retries a part of its work: open a savepoint before the
 part, and `rollback_to` it when a statement fails.
 
+## Sync
+
+A table defined with `sync` records every **effective** write (an insert,
+an update that changes the row, a delete) as an immutable *change* in the
+same transaction as the row: a statement, a savepoint or a transaction that
+fails takes its changes with it, and a committed row always has its change
+(RFC-001 §13). Remote changes come back through `sync_apply_remote` and
+never produce local changes. The network is the client's; every sync
+operation is a short transaction of its own.
+
+**Push.** `sync_claim` leases the next eligible changes of a remote, in
+commit order, **one per row**: the first open change of a row that has no
+conflict, is not blocked and is not held by a live lease. Each answers an
+*envelope*:
+
+```json
+{"mutation_id": "…", "table": "notes", "key": "n1", "generation": 1,
+ "local_revision": 1, "local_transaction_id": "…", "operation": "upsert",
+ "row": {"id": "n1", "title": "Draft"}, "base_version": null,
+ "predecessor": null, "attempt": 1}
+```
+
+- `mutation_id` is stable: every claim of the change sends the same id and
+  the same bytes, so the server deduplicates retries.
+- `base_version` is the server version the change builds on (`null` when
+  the server never confirmed the row), fixed at the first claim.
+- `local_transaction_id` is shared by the changes of one commit; it does
+  not ask the server for atomicity.
+- `generation` grows when a deleted key is created again.
+- `max_bytes` bounds the JSON size of the batch, except that an envelope
+  larger than it alone is sent alone. A lease expires after `lease_ms`;
+  then the same envelopes can be claimed again.
+
+`sync_push_result` records what the server answered:
+
+- each item of `acknowledged` (`mutation_id`, `table`, `key`,
+  `local_revision`, `server_version`) settles **exactly that mutation**: the
+  acknowledgement of revision 7 never settles revision 8. It is accepted
+  even after the lease expired. One that names an unknown mutation is
+  `UnknownMutation`; one whose table, key, revision or remote do not match,
+  or of a change never claimed, is `AcknowledgementMismatch`. Either fails
+  the whole call, which then changes nothing. A duplicate is answered as
+  success and changes nothing.
+- each item of `rejected` (`mutation_id`, `reason`, `retryable`) applies
+  only while `lease_id` still holds the change: `retryable` makes it pending
+  again, otherwise it is blocked until `sync_retry`. Others are listed in
+  `ignored`.
+- with `lease_id`, the changes of the lease the result leaves out are
+  released (pending again).
+
+`sync_release` releases what a lease still holds; a lease that moved on
+releases nothing.
+
+**Pull.** `sync_apply_remote` applies a page of remote changes (`table`,
+`key`, `operation`: `upsert` or `delete`, `row` for an upsert, whose
+primary key must be `key`, `server_version`, and optionally the
+`mutation_id` it echoes) and stores `next_checkpoint`, in one transaction:
+everything or nothing. The page must have been read after the current
+checkpoint (`expected_checkpoint`, `null` before the first page), else
+`StaleCheckpoint`. Per change:
+
+1. an echo of an open local mutation that was claimed acknowledges it; an
+   echo of a settled one is skipped;
+2. a change the row already holds (same `server_version`, nothing pending)
+   is skipped;
+3. over a pending local change or an open conflict it becomes a
+   **conflict**: the local row stays, and the remote variant is kept;
+4. otherwise the row takes it (indexes included), without a local change.
+
+**Conflicts.** `sync_conflicts` lists them with the current
+`local_row_version`, the local row, the open local mutations, the remote
+variant and the `base_version` the local changes built on. `sync_resolve`
+takes the row version as precondition (`RowVersionMismatch` when the row
+changed since) and refuses while a change of the row is leased
+(`MutationInFlight`). The `resolution` is `{"kind": "accept_remote"}` (the
+row takes the remote variant; the local changes are settled as resolved,
+never as acknowledged), `{"kind": "keep_local"}` (the local row is sent
+again on the remote version) or `{"kind": "merged", "row": {...}}`.
+
+**Deletes.** A deleted row leaves a tombstone in the sync records until the
+server acknowledged the deletion; creating the key again meanwhile is
+`TombstonePending`.
+
+**States.** `sync_state` answers `local_only` (the table is not
+synchronized), `unknown` (no evidence of the server state, such as rows
+written before the table was synchronized), `pending`, `synced`, `conflict`
+or `blocked`, with the revisions: `local_revision`,
+`acknowledged_local_revision`, `settled_local_revision` (every revision up
+to it is acknowledged or resolved), and `row_version`, which changes with
+every change of the local row.
+
 ## Errors
 
 | Code | Meaning |
@@ -598,6 +705,14 @@ part, and `rollback_to` it when a statement fails.
 | `UnknownTransaction` | The transaction id does not belong to this database. |
 | `AlreadyOpen` | The files are already open by another engine instance of this process. |
 | `Closed` | The database is closed. |
+| `SyncNotTracked` | The table (or the remote) of a sync operation is not synchronized. |
+| `UnknownMutation` | A sync operation names a mutation the database does not know. |
+| `AcknowledgementMismatch` | An acknowledgement does not match its mutation, or the mutation was never claimed. |
+| `StaleCheckpoint` | A page was read after another checkpoint than the current one. |
+| `ConflictNotFound` | The conflict does not exist, or was resolved. |
+| `RowVersionMismatch` | The row changed since the conflict was read. |
+| `MutationInFlight` | A change of the row is leased: acknowledge or release it first. |
+| `TombstonePending` | The key was deleted and the deletion is not acknowledged yet. |
 | `UnsupportedProtocol` | The request speaks another protocol version. |
 | `InternalPanic` | The engine failed internally; the process goes on. |
 
@@ -1734,6 +1849,529 @@ ones left.
   "v": 1,
   "ok": {
     "dropped": false
+  }
+}
+```
+
+#### Define a synchronized table: every write records a change
+
+```json
+{
+  "v": 1,
+  "op": "define_table",
+  "table": {
+    "name": "notes",
+    "primary_key": "id",
+    "auto_increment": false,
+    "indexes": [],
+    "sync": "primary"
+  }
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "changed": true
+  }
+}
+```
+
+#### Write to it as to any table
+
+```json
+{
+  "v": 1,
+  "op": "execute",
+  "statement": {
+    "op": "insert",
+    "table": "notes",
+    "rows": [
+      {
+        "id": "n1",
+        "title": "Draft"
+      }
+    ]
+  }
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "affected": 1,
+    "rows": [
+      {
+        "id": "n1",
+        "title": "Draft"
+      }
+    ]
+  }
+}
+```
+
+#### The change is pending, committed with the row
+
+```json
+{
+  "v": 1,
+  "op": "sync_status",
+  "remote": "primary"
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "checkpoint": null,
+    "pending": 1,
+    "conflicts": 0
+  }
+}
+```
+
+#### Claim a batch to push: a lease and immutable envelopes
+
+```json
+{
+  "v": 1,
+  "op": "sync_claim",
+  "remote": "primary",
+  "max_changes": 10,
+  "max_bytes": null,
+  "lease_ms": 30000
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "lease_id": "$lease",
+    "envelopes": [
+      {
+        "mutation_id": "$mutation",
+        "table": "notes",
+        "key": "n1",
+        "generation": 1,
+        "local_revision": 1,
+        "local_transaction_id": "…",
+        "operation": "upsert",
+        "row": {
+          "id": "n1",
+          "title": "Draft"
+        },
+        "base_version": null,
+        "predecessor": null,
+        "attempt": 1
+      }
+    ]
+  }
+}
+```
+
+#### List the open changes
+
+```json
+{
+  "v": 1,
+  "op": "sync_pending",
+  "remote": "primary",
+  "table": null,
+  "limit": null
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "count": 1,
+    "changes": [
+      {
+        "mutation_id": "$mutation",
+        "table": "notes",
+        "key": "n1",
+        "local_revision": 1,
+        "operation": "upsert",
+        "state": "leased",
+        "attempts": 1,
+        "last_error": null
+      }
+    ]
+  }
+}
+```
+
+#### Record what the server stored: one mutation and revision
+
+```json
+{
+  "v": 1,
+  "op": "sync_push_result",
+  "remote": "primary",
+  "lease_id": "$lease",
+  "acknowledged": [
+    {
+      "mutation_id": "$mutation",
+      "table": "notes",
+      "key": "n1",
+      "local_revision": 1,
+      "server_version": "v1"
+    }
+  ],
+  "rejected": []
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "acknowledged": 1,
+    "rejected": 0,
+    "released": 0,
+    "ignored": []
+  }
+}
+```
+
+#### A duplicate acknowledgement changes nothing
+
+```json
+{
+  "v": 1,
+  "op": "sync_push_result",
+  "remote": "primary",
+  "lease_id": null,
+  "acknowledged": [
+    {
+      "mutation_id": "$mutation",
+      "table": "notes",
+      "key": "n1",
+      "local_revision": 1,
+      "server_version": "v1"
+    }
+  ],
+  "rejected": []
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "acknowledged": 0,
+    "rejected": 0,
+    "released": 0,
+    "ignored": []
+  }
+}
+```
+
+#### The row is synchronized
+
+```json
+{
+  "v": 1,
+  "op": "sync_state",
+  "table": "notes",
+  "key": "n1"
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "state": {
+      "state": "synced",
+      "deleted": false,
+      "sending": false,
+      "attempts": 0,
+      "last_error": null,
+      "pending": 0,
+      "local_revision": 1,
+      "acknowledged_local_revision": 1,
+      "settled_local_revision": 1,
+      "row_version": 1,
+      "server_version": "v1",
+      "conflict": null
+    }
+  }
+}
+```
+
+#### Edit it locally
+
+```json
+{
+  "v": 1,
+  "op": "execute",
+  "statement": {
+    "op": "update",
+    "table": "notes",
+    "filter": {
+      "op": "eq",
+      "field": "id",
+      "value": "n1"
+    },
+    "set": {
+      "title": "Edited"
+    }
+  }
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "affected": 1,
+    "rows": []
+  }
+}
+```
+
+#### A server change over the pending edit becomes a conflict
+
+```json
+{
+  "v": 1,
+  "op": "sync_apply_remote",
+  "remote": "primary",
+  "expected_checkpoint": null,
+  "next_checkpoint": "c1",
+  "changes": [
+    {
+      "table": "notes",
+      "key": "n1",
+      "operation": "upsert",
+      "row": {
+        "id": "n1",
+        "title": "Remote"
+      },
+      "server_version": "v2",
+      "mutation_id": null
+    }
+  ]
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "applied": 0,
+    "conflicts": 1,
+    "acknowledged": 0,
+    "skipped": 0
+  }
+}
+```
+
+#### The conflict keeps both variants
+
+```json
+{
+  "v": 1,
+  "op": "sync_conflicts",
+  "remote": "primary"
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "conflicts": [
+      {
+        "id": "$conflict",
+        "table": "notes",
+        "key": "n1",
+        "local_row_version": 2,
+        "local_row": {
+          "id": "n1",
+          "title": "Edited"
+        },
+        "outstanding": [
+          "…"
+        ],
+        "remote_version": "v2",
+        "remote_operation": "upsert",
+        "remote_row": {
+          "id": "n1",
+          "title": "Remote"
+        },
+        "base_version": "v1"
+      }
+    ]
+  }
+}
+```
+
+#### A resolution on an old row version is refused
+
+```json
+{
+  "v": 1,
+  "op": "sync_resolve",
+  "conflict": "$conflict",
+  "expected_row_version": 1,
+  "resolution": {
+    "kind": "accept_remote"
+  }
+}
+```
+
+```json
+{
+  "v": 1,
+  "error": {
+    "code": "RowVersionMismatch",
+    "message": "…"
+  }
+}
+```
+
+#### Accept the server variant
+
+```json
+{
+  "v": 1,
+  "op": "sync_resolve",
+  "conflict": "$conflict",
+  "expected_row_version": 2,
+  "resolution": {
+    "kind": "accept_remote"
+  }
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {}
+}
+```
+
+#### A page read after an old checkpoint is refused
+
+```json
+{
+  "v": 1,
+  "op": "sync_apply_remote",
+  "remote": "primary",
+  "expected_checkpoint": null,
+  "next_checkpoint": "c2",
+  "changes": []
+}
+```
+
+```json
+{
+  "v": 1,
+  "error": {
+    "code": "StaleCheckpoint",
+    "message": "…"
+  }
+}
+```
+
+#### Releasing a lease that holds nothing releases nothing
+
+```json
+{
+  "v": 1,
+  "op": "sync_release",
+  "remote": "primary",
+  "lease_id": "$lease",
+  "reason": "timeout"
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "released": 0
+  }
+}
+```
+
+#### Retrying a settled mutation retries nothing
+
+```json
+{
+  "v": 1,
+  "op": "sync_retry",
+  "remote": "primary",
+  "mutation_ids": [
+    "$mutation"
+  ]
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "retried": 0
+  }
+}
+```
+
+#### An acknowledgement of an unknown mutation is refused
+
+```json
+{
+  "v": 1,
+  "op": "sync_push_result",
+  "remote": "primary",
+  "lease_id": null,
+  "acknowledged": [
+    {
+      "mutation_id": "nobody-1",
+      "table": "notes",
+      "key": "n1",
+      "local_revision": 1,
+      "server_version": "v9"
+    }
+  ],
+  "rejected": []
+}
+```
+
+```json
+{
+  "v": 1,
+  "error": {
+    "code": "UnknownMutation",
+    "message": "…"
+  }
+}
+```
+
+#### Everything is settled, at the checkpoint of the last page
+
+```json
+{
+  "v": 1,
+  "op": "sync_status",
+  "remote": "primary"
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "checkpoint": "c1",
+    "pending": 0,
+    "conflicts": 0
   }
 }
 ```

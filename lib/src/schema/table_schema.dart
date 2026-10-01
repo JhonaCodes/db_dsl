@@ -19,6 +19,7 @@ final class TableSchema {
     required this.primaryKey,
     this.autoIncrement = false,
     this.indexes = const [],
+    this.sync,
   });
 
   /// Table name: non-empty, without `:`, not starting with `__`.
@@ -33,12 +34,17 @@ final class TableSchema {
   /// Secondary indexes, in declaration order.
   final List<IndexSchema> indexes;
 
+  /// The remote the table synchronizes with (`PROTOCOL.md`, "Sync"), or
+  /// `null` for a local table.
+  final String? sync;
+
   /// The protocol form.
   Map<String, Object?> toJson() => {
     'name': name,
     'primary_key': primaryKey,
     'auto_increment': autoIncrement,
     'indexes': [for (final index in indexes) index.toJson()],
+    if (sync case final String remote) 'sync': remote,
   };
 
   /// The definition encoded in [json].
@@ -67,6 +73,7 @@ final class TableSchema {
           primaryKey: primaryKey,
           autoIncrement: json['auto_increment'] == true,
           indexes: indexes,
+          sync: json['sync'] as String?,
         ),
       );
     }

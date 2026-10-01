@@ -14,6 +14,7 @@ import '../query/ordering.dart';
 import '../query/queries.dart';
 import '../schema/field.dart';
 import '../protocol/request.dart';
+import '../protocol/sync_records.dart';
 import 'conformance_support.dart';
 import 'protocol_examples.dart';
 
@@ -24,6 +25,7 @@ part 'cases/transaction_cases.dart';
 part 'cases/schema_cases.dart';
 part 'cases/relational_cases.dart';
 part 'cases/protocol_cases.dart';
+part 'cases/sync_cases.dart';
 
 /// One behavior an engine must show.
 final class ConformanceCase {
@@ -68,6 +70,7 @@ abstract final class Conformance {
     ..._TransactionCases.cases,
     ..._SchemaCases.cases,
     ..._RelationalCases.cases,
+    ..._SyncCases.cases,
     ..._ProtocolCases.cases,
   ];
 }

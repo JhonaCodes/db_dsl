@@ -9,12 +9,20 @@ import '../schema/table_schema.dart';
 import 'engine_info.dart';
 import 'query_plan.dart';
 import 'statement.dart';
+import 'sync_records.dart';
+
+part 'sync_requests.dart';
 
 /// A request of the protocol, answered with an output of type [O].
 ///
 /// Why sealed and generic: the protocol has a fixed set of operations, and
 /// each has one answer shape. Engines written in Dart `switch` over the
 /// family exhaustively; the database decodes each answer without casts.
+///
+/// The family may gain members in a minor release, one per new operation
+/// of the protocol (the sync operations arrived in 0.2.4): an engine
+/// written in Dart adds the case, apps that never switch over requests are
+/// not affected.
 sealed class ProtocolRequest<O> {
   const ProtocolRequest();
 
@@ -82,6 +90,8 @@ sealed class ProtocolRequest<O> {
           when TransactionControl.byWire.containsKey(op) =>
         Ok(TransactionControlRequest(id, TransactionControl.byWire[op]!)),
       {'v': version, 'op': 'info'} => Ok(const InfoRequest()),
+      {'v': version, 'op': String()} when _SyncRequests.decode(json) != null =>
+        _SyncRequests.decode(json)!,
       {'v': version} => _invalid(json),
       _ => Err(
         DbError(DbErrorCode.unsupportedProtocol, 'Protocol version missing'),
