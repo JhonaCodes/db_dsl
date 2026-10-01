@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    name: Format, analyze and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Get dependencies
+        run: dart pub get
+
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: Analyze
+        run: dart analyze --fatal-infos
+
+      - name: Test on the VM
+        run: dart test
+
+      - name: Test on the web
+        run: dart test -p chrome
+
+      - name: Run the example
+        run: dart run example/example.dart
+
+      - name: PROTOCOL.md examples are up to date
+        run: |
+          dart run tool/protocol_examples.dart
+          git diff --exit-code PROTOCOL.md
+
+  score:
+    name: Package score
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Run pana
+        run: |
+          dart pub global activate pana
+          dart pub global run pana --exit-code-threshold 0 .
