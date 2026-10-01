@@ -1,3 +1,17 @@
+## 0.2.2
+
+Documentation and tests; no change in behaviour.
+
+- PROTOCOL.md has a replayed example of every operation: `tables`,
+  `explain`, `info`, a read transaction (and the write it refuses), a
+  savepoint `release`, `rollback` of a whole transaction, and `drop_table`.
+  Every engine of the conformance suite (MemoryEngine and the native one)
+  gives the documented answers; plan and storage values, which may differ
+  between engines, are shown as `…`.
+- A test checks that every operation and statement of the protocol has an
+  example: its switches are exhaustive over the sealed request and
+  statement families, so a new kind cannot ship without one.
+
 ## 0.2.1
 
 Documentation only; no change in behaviour.

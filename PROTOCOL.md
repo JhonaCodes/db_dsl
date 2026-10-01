@@ -1368,6 +1368,368 @@ ones left.
 }
 ```
 
+#### Every table definition, in name order
+
+```json
+{
+  "v": 1,
+  "op": "tables"
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "tables": [
+      {
+        "name": "posts",
+        "primary_key": "id",
+        "auto_increment": false,
+        "indexes": [
+          {
+            "name": "by_author",
+            "fields": [
+              "author_id"
+            ],
+            "unique": false
+          }
+        ]
+      },
+      {
+        "name": "users",
+        "primary_key": "id",
+        "auto_increment": true,
+        "indexes": [
+          {
+            "name": "by_city_age",
+            "fields": [
+              "city",
+              "age"
+            ],
+            "unique": false
+          },
+          {
+            "name": "by_email",
+            "fields": [
+              "email"
+            ],
+            "unique": true
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+#### Explain a query; each engine chooses its own plan
+
+```json
+{
+  "v": 1,
+  "op": "explain",
+  "query": {
+    "table": "users",
+    "filter": {
+      "op": "eq",
+      "field": "city",
+      "value": "Lima"
+    }
+  }
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "plan": {
+      "table": "users",
+      "access": "…",
+      "index": "…",
+      "descending": "…",
+      "presorted": "…",
+      "exact": "…"
+    }
+  }
+}
+```
+
+#### Describe the database
+
+```json
+{
+  "v": 1,
+  "op": "info"
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "protocol": 1,
+    "tables": 2,
+    "lmdb": "…",
+    "map_size": "…"
+  }
+}
+```
+
+#### Begin a read transaction
+
+```json
+{
+  "v": 1,
+  "op": "begin",
+  "mode": "read",
+  "timeout_ms": 30000
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "transaction": "$transaction"
+  }
+}
+```
+
+#### Read inside it, from its snapshot
+
+```json
+{
+  "v": 1,
+  "op": "tx_execute",
+  "transaction": "$transaction",
+  "statement": {
+    "op": "count",
+    "table": "users"
+  }
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "count": 3
+  }
+}
+```
+
+#### A read transaction refuses writes
+
+```json
+{
+  "v": 1,
+  "op": "tx_execute",
+  "transaction": "$transaction",
+  "statement": {
+    "op": "delete",
+    "table": "users"
+  }
+}
+```
+
+```json
+{
+  "v": 1,
+  "error": {
+    "code": "ReadOnlyTransaction",
+    "message": "…"
+  }
+}
+```
+
+#### End it
+
+```json
+{
+  "v": 1,
+  "op": "rollback",
+  "transaction": "$transaction"
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {}
+}
+```
+
+#### Begin another write transaction
+
+```json
+{
+  "v": 1,
+  "op": "begin",
+  "mode": "write",
+  "timeout_ms": 30000
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "transaction": "$transaction"
+  }
+}
+```
+
+#### Open a savepoint in it
+
+```json
+{
+  "v": 1,
+  "op": "savepoint",
+  "transaction": "$transaction"
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {}
+}
+```
+
+#### Write inside the savepoint
+
+```json
+{
+  "v": 1,
+  "op": "tx_execute",
+  "transaction": "$transaction",
+  "statement": {
+    "op": "insert",
+    "table": "posts",
+    "rows": [
+      {
+        "id": "p9",
+        "author_id": 1,
+        "title": "Kept"
+      }
+    ]
+  }
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "affected": 1,
+    "rows": [
+      {
+        "id": "p9",
+        "author_id": 1,
+        "title": "Kept"
+      }
+    ]
+  }
+}
+```
+
+#### Release the savepoint; its write stays in the transaction
+
+```json
+{
+  "v": 1,
+  "op": "release",
+  "transaction": "$transaction"
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {}
+}
+```
+
+#### Roll the whole transaction back
+
+```json
+{
+  "v": 1,
+  "op": "rollback",
+  "transaction": "$transaction"
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {}
+}
+```
+
+#### Nothing of a rolled back transaction is stored
+
+```json
+{
+  "v": 1,
+  "op": "execute",
+  "statement": {
+    "op": "find",
+    "table": "posts",
+    "key": "p9"
+  }
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "row": null
+  }
+}
+```
+
+#### Drop a table with its rows and indexes
+
+```json
+{
+  "v": 1,
+  "op": "drop_table",
+  "name": "posts"
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "dropped": true
+  }
+}
+```
+
+#### Dropping it again answers false
+
+```json
+{
+  "v": 1,
+  "op": "drop_table",
+  "name": "posts"
+}
+```
+
+```json
+{
+  "v": 1,
+  "ok": {
+    "dropped": false
+  }
+}
+```
+
 #### Another protocol version is refused
 
 ```json

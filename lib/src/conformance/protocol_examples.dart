@@ -421,6 +421,155 @@ abstract final class ProtocolExamples {
       'op': 'commit',
       'transaction': transaction,
     }, errorCode: 'TransactionClosed'),
+    ProtocolExample(
+      'Every table definition, in name order',
+      {'v': 1, 'op': 'tables'},
+      ok: {
+        'tables': [
+          {
+            'name': 'posts',
+            'primary_key': 'id',
+            'auto_increment': false,
+            'indexes': [
+              {
+                'name': 'by_author',
+                'fields': ['author_id'],
+                'unique': false,
+              },
+            ],
+          },
+          {
+            'name': 'users',
+            'primary_key': 'id',
+            'auto_increment': true,
+            'indexes': [
+              {
+                'name': 'by_city_age',
+                'fields': ['city', 'age'],
+                'unique': false,
+              },
+              {
+                'name': 'by_email',
+                'fields': ['email'],
+                'unique': true,
+              },
+            ],
+          },
+        ],
+      },
+    ),
+    ProtocolExample(
+      'Explain a query; each engine chooses its own plan',
+      {
+        'v': 1,
+        'op': 'explain',
+        'query': {
+          'table': 'users',
+          'filter': {'op': 'eq', 'field': 'city', 'value': 'Lima'},
+        },
+      },
+      ok: {
+        'plan': {
+          'table': 'users',
+          'access': any,
+          'index': any,
+          'descending': any,
+          'presorted': any,
+          'exact': any,
+        },
+      },
+    ),
+    ProtocolExample(
+      'Describe the database',
+      {'v': 1, 'op': 'info'},
+      ok: {'protocol': 1, 'tables': 2, 'lmdb': any, 'map_size': any},
+    ),
+    ProtocolExample(
+      'Begin a read transaction',
+      {'v': 1, 'op': 'begin', 'mode': 'read', 'timeout_ms': 30000},
+      ok: {'transaction': transaction},
+    ),
+    ProtocolExample(
+      'Read inside it, from its snapshot',
+      {
+        'v': 1,
+        'op': 'tx_execute',
+        'transaction': transaction,
+        'statement': {'op': 'count', 'table': 'users'},
+      },
+      ok: {'count': 3},
+    ),
+    ProtocolExample('A read transaction refuses writes', {
+      'v': 1,
+      'op': 'tx_execute',
+      'transaction': transaction,
+      'statement': {'op': 'delete', 'table': 'users'},
+    }, errorCode: 'ReadOnlyTransaction'),
+    ProtocolExample('End it', {
+      'v': 1,
+      'op': 'rollback',
+      'transaction': transaction,
+    }, ok: <String, Object?>{}),
+    ProtocolExample(
+      'Begin another write transaction',
+      {'v': 1, 'op': 'begin', 'mode': 'write', 'timeout_ms': 30000},
+      ok: {'transaction': transaction},
+    ),
+    ProtocolExample('Open a savepoint in it', {
+      'v': 1,
+      'op': 'savepoint',
+      'transaction': transaction,
+    }, ok: <String, Object?>{}),
+    ProtocolExample(
+      'Write inside the savepoint',
+      {
+        'v': 1,
+        'op': 'tx_execute',
+        'transaction': transaction,
+        'statement': {
+          'op': 'insert',
+          'table': 'posts',
+          'rows': [
+            {'id': 'p9', 'author_id': 1, 'title': 'Kept'},
+          ],
+        },
+      },
+      ok: {
+        'affected': 1,
+        'rows': [
+          {'id': 'p9', 'author_id': 1, 'title': 'Kept'},
+        ],
+      },
+    ),
+    ProtocolExample(
+      'Release the savepoint; its write stays in the transaction',
+      {'v': 1, 'op': 'release', 'transaction': transaction},
+      ok: <String, Object?>{},
+    ),
+    ProtocolExample('Roll the whole transaction back', {
+      'v': 1,
+      'op': 'rollback',
+      'transaction': transaction,
+    }, ok: <String, Object?>{}),
+    ProtocolExample(
+      'Nothing of a rolled back transaction is stored',
+      {
+        'v': 1,
+        'op': 'execute',
+        'statement': {'op': 'find', 'table': 'posts', 'key': 'p9'},
+      },
+      ok: {'row': null},
+    ),
+    ProtocolExample(
+      'Drop a table with its rows and indexes',
+      {'v': 1, 'op': 'drop_table', 'name': 'posts'},
+      ok: {'dropped': true},
+    ),
+    ProtocolExample(
+      'Dropping it again answers false',
+      {'v': 1, 'op': 'drop_table', 'name': 'posts'},
+      ok: {'dropped': false},
+    ),
     ProtocolExample('Another protocol version is refused', {
       'v': 2,
       'op': 'tables',
